@@ -11,30 +11,27 @@
     -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src https://0.peerjs.com wss://0.peerjs.com; base-uri 'none'; form-action 'none'">
     <meta name="referrer" content="no-referrer">
-    <title>[ZERO-TRACE TERMINAL v3.0 - HARDENED]</title>
+    <title>[P2P TERMINAL]</title>
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
 
     <!-- SPLASH SCREEN -->
     <div id="splash-screen">
-        <img class="splash-logo" src="assets/logo.png" alt="Hardlint Cybersecurity Team Logo">
-        <div class="splash-text">&gt; MADE BY HARDLINT CYBERSECURITY TEAM &lt;</div>
-        <div class="vpn-warning">⚠ WARNING: USE A VPN BEFORE PROCEEDING ⚠</div>
+        <img class="splash-logo" src="assets/logo.svg" alt="">
+        <div class="splash-text">&gt; P2P TERMINAL &lt;</div>
+        <div class="vpn-warning">⚠ TIP: USE A VPN TO HIDE YOUR IP ADDRESS ⚠</div>
         <button class="splash-btn" id="splashEnterBtn">[ ENTER TERMINAL ]</button>
     </div>
 
     <!-- MAIN MENU -->
     <div class="container" id="menu">
-        <h2>&gt; SECURE_P2P_TERMINAL // MAIN_MENU</h2>
+        <h2>&gt; P2P_TERMINAL // MAIN_MENU</h2>
         <button id="menuHostBtn">[1] INITIALIZE ROOM (HOST)</button>
         <hr>
         <button id="menuJoinBtn">[2] CONNECT TO ROOM (GUEST)</button>
-        <hr>
-        <div class="donate-text">Hard-Chat is 100% free, open-source, and maintained by the Hardlint Cybersecurity Team. We don't run ads and we don't sell data. If you believe in our mission and want to help us fund our future self-hosted infrastructure (custom STUN/TURN servers), consider supporting us!</div>
-        <div class="donate-btn" id="donateBtn">[ ◎ DONATE SOL ]</div>
-        <div class="donate-address" id="donateAddress">GSsqZCtDC7rf53U6gC5cJ4weAYYT9g7twxz9t15mfRDV</div>
-        <div class="brand-footer">HARDLINT CYBERSECURITY TEAM</div>
+        <div class="brand-footer">P2P · E2E ENCRYPTED · NO ACCOUNTS</div>
     </div>
 
     <!-- HOST SETUP -->
@@ -103,7 +100,7 @@
             <input type="text" id="messageInput" placeholder="> Type payload..." maxlength="5000" autocomplete="off" spellcheck="false">
             <button id="sendBtn">SEND</button>
         </div>
-        <div class="brand-footer">HARDLINT CYBERSECURITY TEAM</div>
+        <div class="brand-footer">PEER-TO-PEER · END-TO-END ENCRYPTED</div>
     </div>
 
     <!-- PeerJS 1.5.4, unverändert aus dem npm-Paket, lokal ausgeliefert und per SRI-Hash geprüft -->

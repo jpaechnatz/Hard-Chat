@@ -1,4 +1,4 @@
-// Zero-Trace Terminal — TURN-Credential-Worker (Cloudflare Workers)
+// P2P Terminal — TURN-Credential-Worker (Cloudflare Workers)
 // ---------------------------------------------------------------------------
 // Liefert dem Browser KURZLEBIGE TURN-Zugangsdaten. Die eigentlichen Geheimnisse
 // (Cloudflare-API-Token bzw. coturn-Shared-Secret) bleiben im Worker und landen

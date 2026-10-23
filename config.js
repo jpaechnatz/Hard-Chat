@@ -1,4 +1,4 @@
-// Zero-Trace Terminal — Konfiguration
+// P2P Terminal — Konfiguration
 // ---------------------------------------------------------------------------
 // Die App läuft ohne Änderungen: direkte Verbindungen, kein Relay eines Dritten.
 // Alles hier ist optional.
