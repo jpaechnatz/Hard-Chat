@@ -90,7 +90,7 @@ Once the two Peers have "introduced" themselves, WebRTC starts ICE negotiation t
 
 **Configured ICE servers (in priority order):**
 
-- **Default: no TURN relay.** Connections are direct only (host/IPv6 and STUN-assisted candidates). If no direct path exists, the app says so (`[NO DIRECT PATH]`) instead of hanging.
+- **TURN relay (this deployment):** Metered free tier, `turns:global.relay.metered.ca:443?transport=tcp` only (TURN over TLS). The credentials are static and stored Base64-obfuscated in `config.js` (`usernameB64`/`credentialB64`). That is obfuscation, not security, and the free tier stops when its quota is used up. ICE uses the relay only if no direct candidate pair works (unless `forceRelay`).
 - **Optional TURN credential endpoint** (`turnCredentialsUrl`): your own endpoint (`turn-worker/`: coturn or Cloudflare Realtime TURN), returning `{iceServers:[…]}` or a plain array. Fetched fresh per session, validated, port-53 URLs filtered out.
 - **Optional own TURN servers** (`turnServers`): fixed credentials or a coturn static-auth secret, from which the app derives time-limited credentials (TURN REST API scheme). Note that such a secret is public in `config.js`; run coturn with a bandwidth cap and `denied-peer-ip` for private ranges.
 - **STUN:** `relay.adminforge.de:443` and `relay2.adminforge.de:443` (adminForge states it does not log IP addresses).
@@ -190,8 +190,8 @@ Key point to understand: **encryption protects content, not connection metadata*
 | Replay / reordering / reflection | Re-sending or bouncing back captured packets (e.g. by a malicious broker) | ✅ Yes — authenticated sequence numbers + per-direction keys |
 | Session hijack / DoS via second connection | Third party connects to the room ID and replaces the active connection | ✅ Yes — key confirmation handshake, one authenticated peer only, broker left after handshake |
 | Compromised CDN / supply chain | Manipulated PeerJS from a CDN steals keys | ✅ Yes — PeerJS served from the repo, SRI hash, strict CSP (no inline scripts, no foreign hosts) |
-| Leaked relay credentials | Credentials hardcoded in public code | ✅ Yes — no relay credentials in the default configuration |
-| No connection behind strict firewalls | Without TURN, symmetric NAT / blocked UDP prevents a direct path | ⚠️ Accepted trade-off — clear error message; optional own TURN relay |
+| Leaked relay credentials | Credentials in public code | ⚠️ Accepted — static Metered credentials (Base64-obfuscated) can be used by anyone. Impact limited to the free quota; rotate in the Metered dashboard if abused |
+| No connection behind strict firewalls | Symmetric NAT / blocked UDP prevents a direct path | ✅ Mostly — fallback to TURN over TLS on port 443; clear error message otherwise |
 | Invite link in history/camera app | The URL with the Room Key may be stored by the scanning app or browser history | ⚠️ Partial — fragment removed from the address bar on load (the global browser history or the scanner app may still keep the original URL); key expires after 120 s or once a peer is authenticated |
 | Clickjacking | Page embedded invisibly in a foreign site (e.g. to trick a click on "IDENTICAL") | ✅ Yes — the app refuses to run inside a frame (GitHub Pages cannot send `frame-ancestors` headers) |
 | Deanonymization via IP metadata | IP↔identity correlation through third-party logs | ⚠️ Partial — `forceRelay` hides your IP from the peer; towards broker/relay a VPN is still required |
