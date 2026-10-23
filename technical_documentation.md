@@ -1,6 +1,6 @@
-# Zero-Trace Terminal — Technical Documentation
+# P2P Terminal — Technical Documentation
 
-**Project:** Hardlint Cybersecurity Team
+**Project:** P2P Terminal (fork of Hard-Chat / Zero-Trace Terminal)
 **Type:** Browser-based, end-to-end encrypted P2P chat
 **Last updated:** October 2026 (fork hardening, protocol v3)
 
@@ -8,7 +8,7 @@
 
 ## 1. Architectural Overview
 
-Zero-Trace Terminal is a static web application (HTML/CSS/JS, no proprietary backend) that allows two devices to establish a **direct peer-to-peer connection** via WebRTC, exchanging end-to-end encrypted text messages.
+P2P Terminal is a static web application (HTML/CSS/JS, no proprietary backend) that allows two devices to establish a **direct peer-to-peer connection** via WebRTC, exchanging end-to-end encrypted text messages.
 
 **Main components:**
 
@@ -236,6 +236,7 @@ Key point to understand: **encryption protects content, not connection metadata*
 5. **v5** — Timeout extended to 120s, Room Key expiry system with manual regeneration, VPN warning on splash screen, TURN credential obfuscation
 6. **v6 (fork, protocol v2)** — Security hardening: PeerJS/fonts self-hosted with SRI + strict CSP; per-direction keys (HKDF), authenticated sequence numbers, key confirmation handshake, single authenticated peer, broker disconnect after handshake; fixed stale-timer bug; removed hardcoded/public TURN credentials in favour of a self-hosted credential worker; IP-free logging by default. **Not compatible with v1–v5 clients.**
 7. **v7 (fork, protocol v3)** — Ephemeral ECDH key exchange (forward secrecy), security code (SAS) verification, QR code / invite link handover, adminForge STUN, no third-party TURN by default (optional own relay). **Not compatible with v6 clients.**
+8. **v8 (fork)** — Debranding: neutral name (P2P Terminal), new SVG logo/favicon, donation section and third-party branding removed; README rewritten for users.
 
 ---
 

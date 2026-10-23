@@ -1,4 +1,4 @@
-// Zero-Trace Terminal — Anwendungslogik (Protokoll v3)
+// P2P Terminal — Anwendungslogik (Protokoll v3)
 // ---------------------------------------------------------------------------
 // Sicherheitsmodell (Kurzfassung, Details in technical_documentation.md):
 //  * Room Key (100 Zeichen, ~617 Bit) -> PBKDF2 -> HKDF -> Handshake-Schlüssel je
@@ -1098,11 +1098,6 @@
     $('sendBtn').addEventListener('click', sendMessage);
     $('messageInput').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') sendMessage(); });
 
-    $('donateBtn').addEventListener('click', async (ev) => {
-        const btn = ev.currentTarget;
-        const ok = await writeClipboard($('donateAddress').textContent);
-        flashButton(btn, ok ? '[ ✓ ADDRESS COPIED! ]' : '[ COPY FAILED ]');
-    });
 
     // Schutz gegen Einbetten in fremde Seiten (Clickjacking): GitHub Pages kann keine
     // frame-ancestors-Header setzen, daher Prüfung im Skript.
