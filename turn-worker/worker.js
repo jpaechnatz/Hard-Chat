@@ -20,7 +20,7 @@ export default {
         const allowed = (env.ALLOWED_ORIGIN || '').trim();
         const cors = {
             'Access-Control-Allow-Origin': allowed,
-            'Access-Control-Allow-Methods': 'POST, OPTIONS',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
             'Access-Control-Max-Age': '600',
             'Vary': 'Origin',
             'Cache-Control': 'no-store',
@@ -35,7 +35,7 @@ export default {
             return new Response('forbidden', { status: 403, headers: { 'Cache-Control': 'no-store' } });
         }
         if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
-        if (request.method !== 'POST') return new Response('method not allowed', { status: 405, headers: cors });
+        if (request.method !== 'POST' && request.method !== 'GET') return new Response('method not allowed', { status: 405, headers: cors });
 
         if (env.RATE_LIMITER) {
             const ip = request.headers.get('CF-Connecting-IP') || 'unknown';

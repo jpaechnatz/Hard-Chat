@@ -341,3 +341,22 @@ hr { border: 0; border-top: 1px dashed #00ff66; margin: 16px 0; width: 100%; }
 .splash-hidden { opacity: 0; visibility: hidden; }
 .msg-warn { color: #ff3333; font-style: italic; font-size: 11px; margin: 4px 0; text-align: center; }
 .flash { background: #00ff66 !important; color: #000000 !important; }
+
+/* Room-Key-Übergabe per QR-Code */
+.btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.btn-row .btn-copy { flex: 1 1 140px; width: auto; }
+.qr-wrap { text-align: center; margin: 4px 0 12px 0; }
+.qr-wrap canvas { background: #ffffff; padding: 12px; max-width: 100%; height: auto; image-rendering: pixelated; }
+.qr-hint { font-size: 10px; color: #00b347; margin-top: 6px; }
+
+/* Sicherheitscode (SAS) */
+.sas-box { border: 1px dashed #ffb000; padding: 10px; margin-bottom: 10px; }
+.sas-box.verified { border-color: #00ff66; }
+.sas-title { font-size: 11px; color: #ffb000; margin-bottom: 8px; }
+.sas-box.verified .sas-title { color: #00ff66; }
+.sas-emojis { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-bottom: 8px; }
+.sas-emoji { display: flex; flex-direction: column; align-items: center; min-width: 64px; }
+.sas-emoji .glyph { font-size: 28px; line-height: 1.2; }
+.sas-emoji .name { font-size: 10px; color: #00b347; text-transform: uppercase; }
+.sas-actions { display: flex; gap: 6px; }
+.sas-actions button { margin: 0; }

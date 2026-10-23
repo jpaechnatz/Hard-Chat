@@ -5,13 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!--
       Content Security Policy: nur eigene Dateien, keine Inline-Skripte, keine Fremd-CDNs.
-      connect-src muss den Signaling-Server und (falls gesetzt) deinen TURN-Credential-Endpunkt
-      aus config.js enthalten. Beispiel für einen Worker:
-        connect-src https://0.peerjs.com wss://0.peerjs.com https://hard-chat-turn.DEIN-ACCOUNT.workers.dev;
+      connect-src enthält den PeerJS-Signaling-Server und die Metered-TURN-API (*.metered.live).
+      Wer einen anderen TURN-Credential-Endpunkt nutzt (z. B. turn-worker/), trägt ihn hier zusätzlich ein:
+        ... https://hard-chat-turn.DEIN-ACCOUNT.workers.dev;
     -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src https://0.peerjs.com wss://0.peerjs.com; base-uri 'none'; form-action 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src https://0.peerjs.com wss://0.peerjs.com https://*.metered.live; base-uri 'none'; form-action 'none'">
     <meta name="referrer" content="no-referrer">
-    <title>[ZERO-TRACE TERMINAL v2.0 - HARDENED]</title>
+    <title>[ZERO-TRACE TERMINAL v3.0 - HARDENED]</title>
     <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
@@ -43,7 +43,15 @@
 
         <label>&gt; ROOM_KEY_100_CHAR (SHARE WITH PEER):</label>
         <div class="code-box" id="hostRoomCode"></div>
-        <button class="btn-copy" id="hostCopyBtn">[ COPY KEY ]</button>
+        <div class="btn-row">
+            <button class="btn-copy" id="hostCopyBtn">[ COPY KEY ]</button>
+            <button class="btn-copy" id="hostCopyLinkBtn">[ COPY INVITE LINK ]</button>
+            <button class="btn-copy" id="hostQrBtn">[ SHOW QR CODE ]</button>
+        </div>
+        <div class="qr-wrap hidden" id="hostQrWrap">
+            <canvas id="hostQrCanvas" width="10" height="10" aria-label="QR code with invite link"></canvas>
+            <div class="qr-hint">Scan with the guest's phone camera — opens the chat and joins automatically. Don't photograph or share this screen.</div>
+        </div>
 
         <label>&gt; CONNECTION STATUS:</label>
         <div class="code-box" id="hostStatusBox">INITIALIZING P2P NODE...</div>
@@ -78,6 +86,15 @@
             <button class="btn-panic" id="panicBtn">[ PANIC: PURGE SESSION ]</button>
         </div>
 
+        <div class="sas-box hidden" id="sasBox">
+            <div class="sas-title">&gt; VERIFY: compare these symbols with your peer by voice or in person</div>
+            <div class="sas-emojis" id="sasEmojis"></div>
+            <div class="sas-actions">
+                <button id="sasMatchBtn">[ ✓ IDENTICAL ]</button>
+                <button id="sasMismatchBtn" class="btn-panic">[ ✗ DIFFERENT ]</button>
+            </div>
+        </div>
+
         <div id="messages">
             <div class="msg-system">[SYS_INIT] P2P Node Listening...</div>
         </div>
@@ -91,6 +108,8 @@
 
     <!-- PeerJS 1.5.4, unverändert aus dem npm-Paket, lokal ausgeliefert und per SRI-Hash geprüft -->
     <script src="vendor/peerjs.min.js" integrity="sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR"></script>
+    <!-- qrcode-generator 1.5.2 (MIT, Kazuhiko Arase), unverändert aus dem npm-Paket -->
+    <script src="vendor/qrcode.js" integrity="sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k"></script>
     <script src="config.js"></script>
     <script src="app.js"></script>
 </body>

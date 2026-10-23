@@ -2,7 +2,7 @@
 
 **Project:** Hardlint Cybersecurity Team
 **Type:** Browser-based, end-to-end encrypted P2P chat
-**Last updated:** October 2026 (fork hardening, protocol v2)
+**Last updated:** October 2026 (fork hardening, protocol v3)
 
 ---
 
@@ -38,17 +38,17 @@ This string (the **Room Key**) is the only shared secret the two parties need to
 
 ### 2.2 Deriving Keys from the Room Key
 
-Three independent values are derived from the Room Key (protocol v2):
+Three independent values are derived from the Room Key (protocol v3):
 
 ```
-master = PBKDF2(password = Room Key, salt = "ztt-v2-pbkdf2-salt", iterations = 100,000, hash = SHA-256) → 256 bit
+master = PBKDF2(password = Room Key, salt = "ztt-v3-pbkdf2-salt", iterations = 100,000, hash = SHA-256) → 256 bit
 
-hs_host→guest  = HKDF-SHA256(master, info = "ztt-v2 handshake host->guest") → AES-GCM-256, non-extractable
-hs_guest→host  = HKDF-SHA256(master, info = "ztt-v2 handshake guest->host") → AES-GCM-256, non-extractable
-peer_id        = "ztt2-" + hex(HKDF-SHA256(master, info = "ztt-v2 peer-id", 128 bit))
+hs_host→guest  = HKDF-SHA256(master, info = "ztt-v3 handshake host->guest") → AES-GCM-256, non-extractable
+hs_guest→host  = HKDF-SHA256(master, info = "ztt-v3 handshake guest->host") → AES-GCM-256, non-extractable
+peer_id        = "ztt3-" + hex(HKDF-SHA256(master, info = "ztt-v3 peer-id", 128 bit))
 ```
 
-The handshake keys are only used for the key confirmation handshake below; chat messages use per-connection keys derived from two fresh nonces. The peer ID is the only Room-Key-derived value the signaling broker ever sees; it is domain-separated from the encryption keys. Separate keys per direction make it impossible to reflect a party's own messages back to it. The keys are created as **non-extractable** `CryptoKey` objects.
+The handshake keys are only used for the key confirmation handshake below; chat messages use per-connection keys derived from an ephemeral ECDH exchange, both nonces and the Room Key. The peer ID is the only Room-Key-derived value the signaling broker ever sees; it is domain-separated from the encryption keys. Separate keys per direction make it impossible to reflect a party's own messages back to it. The keys are created as **non-extractable** `CryptoKey` objects.
 
 The Room Key generator uses rejection sampling, so every character of the 72-character alphabet is equally likely (≈617 bits of entropy).
 
@@ -63,17 +63,22 @@ The Room Key generator uses rejection sampling, so every character of the 72-cha
 
 > **Why the handshake matters:** the broker also relays the DTLS fingerprints that secure WebRTC, so a malicious broker could in theory sit in the middle of the WebRTC connection. Because every packet is authenticated with keys derived from the Room Key, such a broker can only drop traffic; it cannot read, forge, replay, reorder or reflect messages.
 
-### 2.3a Key Confirmation Handshake
+### 2.3a Key Confirmation Handshake & ECDH Key Exchange
 
 ```
-Guest → Host  : seal_hs_g2h(seq=0, {t:"hello", g:<nonce_guest, 128 bit>})            (re-sent identically until answered)
-Host  → Guest : seal_hs_h2g(seq=0, {t:"chal",  g:<nonce_guest>, n:<nonce_host>})     (re-sent identically until answered)
-Guest → Host  : seal_hs_g2h(seq=1, {t:"resp",  n:<nonce_host>})
+Guest → Host  : seal_hs_g2h(seq=0, {t:"hello", g:<nonce_guest, 128 bit>, c:SHA-256(pk_guest)})     (commitment; re-sent identically until answered)
+Host  → Guest : seal_hs_h2g(seq=0, {t:"chal",  g:<nonce_guest>, n:<nonce_host>, pk:<pk_host>})   (re-sent identically until answered)
+Guest → Host  : seal_hs_g2h(seq=1, {t:"resp",  n:<nonce_host>, pk:<pk_guest>})                  (reveal; host checks the commitment)
 
 Both sides then switch to per-connection keys and restart the sequence numbers at 0:
-key_conn_x = HKDF-SHA256(master, salt = nonce_guest || nonce_host, info = "ztt-v2 conn host->guest" / "guest->host")
+ikm        = ECDH(own private key, peer public key) || HKDF(master, "ztt-v3 ecdh binding")
+salt       = SHA-256("ztt-v3 transcript" || nonce_guest || nonce_host || pk_guest || pk_host)
+key_conn_x = HKDF-SHA256(ikm, salt, info = "ztt-v3 conn host->guest" / "guest->host")
+SAS        = HKDF-SHA256(ikm, salt, info = "ztt-v3 sas", 48 bit) → 6 × 6 bit → 6 of 64 symbols
 ```
-Each side proves possession of the Room Key **and** freshness (it echoes the other side's new nonce). Only after a correct response does the host treat the connection as authenticated. Because chat messages use keys bound to both nonces, traffic recorded on an earlier connection cannot be replayed into a later one, even with the same Room Key. Connections that do not complete the handshake within 15 seconds after the channel opens are closed, at most 8 unauthenticated attempts are handled at once, and once a peer is authenticated every further incoming connection is rejected (it can no longer replace the active one).
+The ephemeral private keys are non-extractable and discarded right after the derivation (**forward secrecy**). Each side proves possession of the Room Key **and** freshness (it echoes the other side's new nonce).
+
+**Security code (SAS):** someone who intercepted the Room Key can decrypt the handshake and substitute their own ECDH keys towards both sides. Doing so inevitably produces two *different* SAS values. Because the guest commits to its public key before it sees the host's (as in ZRTP), the attacker cannot try many keys until the codes happen to match: each attempt succeeds with a probability of only 1 in ~69 billion (36 bits). Comparing the six symbols by voice or in person therefore detects such a man-in-the-middle; the status only shows `ENCRYPTED & VERIFIED ✓` after the user confirms. Only after a correct response does the host treat the connection as authenticated. Because chat messages use keys bound to both nonces, traffic recorded on an earlier connection cannot be replayed into a later one, even with the same Room Key. Connections that do not complete the handshake within 15 seconds after the channel opens are closed, at most 8 unauthenticated attempts are handled at once, and once a peer is authenticated every further incoming connection is rejected (it can no longer replace the active one).
 
 ### 2.4 ICE Negotiation (NAT Traversal)
 
@@ -85,11 +90,12 @@ Once the two Peers have "introduced" themselves, WebRTC starts ICE negotiation t
 
 **Configured ICE servers (in priority order):**
 
-- **Your own TURN relay**, with short-lived credentials fetched per session from `turnCredentialsUrl` (see `turn-worker/`: Cloudflare Realtime TURN or a self-hosted coturn using the TURN REST API scheme). The response is validated; port-53 URLs (blocked by browsers) are filtered out.
-- **STUN fallback** from `config.js` (default: `stun.cloudflare.com:3478`) if no endpoint is configured or it is unreachable.
-- Optional `forceRelay: true` sets `iceTransportPolicy: "relay"`: all traffic goes through your relay and the peer never learns your IP. Without TURN credentials the connection then fails on purpose (fail closed).
+- **TURN credential endpoint** (`turnCredentialsUrl`): your Metered account's API (returns an `iceServers` array) or your own endpoint (`turn-worker/`: Cloudflare Realtime TURN or coturn). Fetched fresh per session, validated, port-53 URLs filtered out.
+- **Additional TURN servers** (`turnServers`): fixed credentials or a coturn static-auth secret, from which the app derives time-limited credentials (TURN REST API scheme).
+- **STUN:** `relay.adminforge.de:443` and `relay2.adminforge.de:443` (adminForge states it does not log IP addresses).
+- Optional `forceRelay: true` sets `iceTransportPolicy: "relay"`: all traffic goes through the relay and the peer never learns your IP. Without a working relay the connection then fails on purpose (fail closed).
 
-All previously hardcoded relays (the original author's Metered.ca account, OpenRelay, freestun, numb.viagenie, ExpressTurn with publicly known credentials) have been removed: anyone could operate or log those shared relays.
+All previously hardcoded relays (the original author's Metered.ca account, OpenRelay, freestun, numb.viagenie, ExpressTurn with publicly known credentials) have been removed.
 
 The browser automatically tries every combination and selects the first one that establishes a working channel (standard ICE algorithm, handled internally by WebRTC).
 
@@ -109,7 +115,7 @@ The browser automatically tries every combination and selects the first one that
 Every message is individually encrypted before being sent over the DataChannel:
 
 ```
-1. header = [version=2, 0, 0, 0, seq (uint32, big endian)]      (8 bytes, seq starts at 0 per direction)
+1. header = [version=3, 0, 0, 0, seq (uint32, big endian)]      (8 bytes, seq starts at 0 per direction)
 2. IV = 12 random bytes (crypto.getRandomValues)
 3. ciphertext = AES-GCM-Encrypt(key_my_direction, IV, JSON{t, ...}, additionalData = header)
 4. packet = header || IV || ciphertext   → sent as raw ArrayBuffer over the DataChannel
@@ -129,9 +135,9 @@ Any rejected packet on an authenticated channel terminates the connection with a
 - **Replay / reordering / reflection protection** — sequence numbers are authenticated as AAD, and each direction has its own key
 
 **What this scheme does NOT cover:**
-- **Forward secrecy across sessions** — if the same Room Key were reused across multiple sessions (not the normal flow, which generates a new one every time), all those sessions would share the same master key (per-connection keys differ, but are derivable by anyone holding the Room Key)
-- **Peer identity authentication** — anyone who knows the Room Key can connect; there is no cryptographic verification of "who" is on the other end beyond possession of the shared key. Whoever obtains the Room Key first (e.g. by intercepting the out-of-band channel) can take the guest's place.
-- **Forward secrecy within a session** — whoever obtains the Room Key *and* recorded the traffic (which additionally requires breaking or bypassing WebRTC's DTLS layer) can decrypt that session.
+- **Unverified sessions** — if the security code is *not* compared, an attacker who intercepted the Room Key can still sit in the middle unnoticed. The app shows `ENCRYPTED — NOT YET VERIFIED` until the codes are confirmed.
+- **Peer identity authentication** — anyone who knows the Room Key can connect; there is no cryptographic verification of "who" is on the other end beyond possession of the shared key. Whoever obtains the Room Key first (e.g. by intercepting the out-of-band channel) can take the guest's place. The security code comparison exposes this as well: the real guest has no matching code to read out.
+- **Compromised device** — malware or a malicious browser extension on either device sees everything in plain text; no protocol can prevent that.
 
 ---
 
@@ -139,7 +145,8 @@ Any rejected packet on an authenticated channel terminates the connection with a
 
 | Data | Persistence | Notes |
 |---|---|---|
-| Room Key | None | Only in a JS variable, gone on close/reload |
+| Room Key | None | Only in a JS variable, gone on close/reload. Invite links carry it in the URL fragment, which the page removes from the address bar immediately (`history.replaceState`) |
+| ECDH private keys | None | Non-extractable, generated per connection, discarded after key derivation |
 | Derived AES-GCM keys | None | Non-extractable `CryptoKey` objects, never written to disk |
 | Chat messages | None | Only live in the DOM/RAM, no localStorage/IndexedDB |
 | Cookies | None | The project uses none at all |
@@ -177,10 +184,14 @@ Key point to understand: **encryption protects content, not connection metadata*
 |---|---|---|
 | Message content interception | MITM on TURN/network traffic | ✅ Yes — end-to-end AES-GCM |
 | Message tampering in transit | Packet manipulation | ✅ Yes — GCM authentication tag, connection is terminated |
+| Intercepted Room Key → man-in-the-middle | Attacker with the key relays and reads everything | ✅ Detectable — security code (SAS) comparison; QR handover avoids interception altogether |
+| Room Key leaked after the conversation | Decrypting recorded traffic later | ✅ Yes — forward secrecy via ephemeral ECDH |
 | Replay / reordering / reflection | Re-sending or bouncing back captured packets (e.g. by a malicious broker) | ✅ Yes — authenticated sequence numbers + per-direction keys |
 | Session hijack / DoS via second connection | Third party connects to the room ID and replaces the active connection | ✅ Yes — key confirmation handshake, one authenticated peer only, broker left after handshake |
 | Compromised CDN / supply chain | Manipulated PeerJS from a CDN steals keys | ✅ Yes — PeerJS served from the repo, SRI hash, strict CSP (no inline scripts, no foreign hosts) |
-| Leaked relay credentials | Credentials hardcoded in public code | ✅ Yes — short-lived credentials from your own worker; worker restricted by origin and rate limit |
+| Leaked relay credentials | Credentials hardcoded in public code | ⚠️ Partial — no shared credentials in the code; a Metered API key in `config.js` is public by design (quota can be consumed, content stays safe) |
+| Invite link in history/camera app | The URL with the Room Key may be stored by the scanning app or browser history | ⚠️ Partial — fragment removed from the address bar on load (the global browser history or the scanner app may still keep the original URL); key expires after 120 s or once a peer is authenticated |
+| Clickjacking | Page embedded invisibly in a foreign site (e.g. to trick a click on "IDENTICAL") | ✅ Yes — the app refuses to run inside a frame (GitHub Pages cannot send `frame-ancestors` headers) |
 | Deanonymization via IP metadata | IP↔identity correlation through third-party logs | ⚠️ Partial — `forceRelay` hides your IP from the peer; towards broker/relay a VPN is still required |
 | Abuse of the credential worker | Origin header can be forged outside browsers | ⚠️ Partial — rate limiting + short TTL, not authentication |
 | Dependency on third-party services | GitHub Pages, PeerJS broker, TURN provider — if suspended, the app stops working | ⚠️ Partial — signaling and TURN are configurable/self-hostable |
@@ -195,6 +206,8 @@ Key point to understand: **encryption protects content, not connection metadata*
 - **P2P/Signaling:** [PeerJS](https://peerjs.com/) v1.5.4 (a wrapper library over native WebRTC), vendored unmodified from the npm package into `vendor/`, pinned with an SRI hash
 - **NAT Traversal:** WebRTC ICE — own TURN relay via short-lived credentials (`turn-worker/`), STUN fallback
 - **Fonts:** Fira Code (SIL OFL), served locally from `assets/fonts/`
+- **QR codes:** [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) 1.5.2 (MIT), vendored unmodified, SRI-pinned
+- **Key exchange:** WebCrypto ECDH P-256 (ephemeral), HKDF-SHA256
 - **Hardening:** Content Security Policy (`default-src 'none'`, scripts only from the same origin, no inline scripts/handlers), `no-referrer`
 - **Hosting:** GitHub Pages (static, automatic HTTPS)
 - **Browser requirements:** WebRTC support, Web Crypto API, ES6+ — requires a secure context (HTTPS); does not work from `file://` or `content://`
@@ -207,8 +220,8 @@ Key point to understand: **encryption protects content, not connection metadata*
 - The page must be served over **HTTPS** (GitHub Pages guarantees this automatically) — it **will not work** if opened as a local file (`content://`, `file://`) due to Secure Context restrictions on the Web Crypto API and WebRTC
 - Both parties must have the page open **at the same time** during the connection attempt (signaling is not persistent/asynchronous)
 - The Room Key must be copied **in full, exactly 100 characters**, with no extra spaces or line breaks introduced by copy-paste
-- For connections behind restrictive NATs: a configured TURN credential endpoint (`config.js` → `turnCredentialsUrl`, see `turn-worker/README.md`)
-- Both parties must use the same protocol version (v6/protocol v2 is not compatible with earlier versions)
+- For connections behind restrictive NATs: a configured TURN relay (`config.js` → `turnCredentialsUrl`, e.g. a free Metered account)
+- Both parties must use the same protocol version (v7/protocol v3 is not compatible with earlier versions)
 
 ---
 
@@ -220,6 +233,7 @@ Key point to understand: **encryption protects content, not connection metadata*
 4. **v4** — Detailed ICE diagnostics (candidate logging, connection states) — fixed a bug that overwrote PeerJS's internal event handlers
 5. **v5** — Timeout extended to 120s, Room Key expiry system with manual regeneration, VPN warning on splash screen, TURN credential obfuscation
 6. **v6 (fork, protocol v2)** — Security hardening: PeerJS/fonts self-hosted with SRI + strict CSP; per-direction keys (HKDF), authenticated sequence numbers, key confirmation handshake, single authenticated peer, broker disconnect after handshake; fixed stale-timer bug; removed hardcoded/public TURN credentials in favour of a self-hosted credential worker; IP-free logging by default. **Not compatible with v1–v5 clients.**
+7. **v7 (fork, protocol v3)** — Ephemeral ECDH key exchange (forward secrecy), security code (SAS) verification, QR code / invite link handover, adminForge STUN, Metered API support for TURN. **Not compatible with v6 clients.**
 
 ---
 

@@ -18,35 +18,41 @@ This project is distributed **for educational and security research purposes**. 
 
 - 🔐 **End-to-end encryption** — AES-GCM 256-bit with separate keys per direction (PBKDF2 → HKDF), sequence numbers against replay/reordering
 - 🤝 **Key confirmation handshake** — a peer only counts as connected after proving it holds the Room Key; the room accepts exactly one authenticated peer
+- 🔄 **Forward secrecy** — ephemeral ECDH (P-256) per connection: a Room Key leaked later does not reveal past conversations
+- 🗣️ **Security code (SAS)** — six symbols both sides compare by voice; detects an attacker who intercepted the Room Key and sits in the middle
+- 📱 **QR code / invite link** — hand over the Room Key in person without any other channel; the key travels in the URL fragment, which is never sent to a server
 - 🌐 **True P2P connection** — direct WebRTC link between the two devices, no central server relaying messages
 - 🚫 **Zero persistence** — no cookies, no localStorage, no database: close the tab and nothing remains
 - 🔑 **Single shared secret** — a randomly generated Room Key (100 characters), no manual technical configuration required
 - 🧹 **Panic Purge** — closes connections, releases session keys, wipes the visible history and overwrites the clipboard (best effort)
-- 📡 **Trusted relay only** — TURN credentials are short-lived and issued by **your own** endpoint (Cloudflare Worker or own coturn); no shared or public relay credentials in the code
+- 📡 **Relay of your choice** — TURN credentials come from your own Metered account or endpoint (short-lived where supported); no shared credentials in the code; STUN via adminForge (no IP logging according to the operator)
 - 🛡️ **No third-party code at runtime** — PeerJS and fonts are served from the repo itself (SRI-pinned), strict Content Security Policy
 
 ---
 
 ## 🚀 How to Use
 
-0. **One-time setup:** enable GitHub Pages and (recommended) deploy the TURN credential worker — see [Deployment](#-deployment)
 1. **Open the page** (must be served over HTTPS — e.g. via GitHub Pages, not opened as a local file)
-2. **Host:** click `[1] INITIALIZE ROOM` → copy the generated Room Key
-3. Send the Room Key to your contact **through a different channel** (in person, voice call, another encrypted app)
-4. **Guest:** click `[2] CONNECT TO ROOM` → paste the received Room Key
-5. Wait for the connection (usually a few seconds) → the chat opens
-6. If the connection isn't established within 2 minutes, the Room Key expires automatically: generate a new one with the dedicated button
+2. **Host:** click `[1] INITIALIZE ROOM`
+3. Hand the Room Key to your contact — best option first:
+   - **In person:** `[ SHOW QR CODE ]` → the guest scans it with the phone camera; the page opens and connects automatically
+   - **Remotely:** `[ COPY INVITE LINK ]` or `[ COPY KEY ]` and send it through a *different*, ideally end-to-end encrypted channel
+4. **Guest:** opens the invite link — or clicks `[2] CONNECT TO ROOM` and pastes the Room Key
+5. Wait for the connection (usually a few seconds) → enter the chat
+6. **Verify:** both see six symbols (e.g. 🐶 Dog · 🔑 Key · …). Compare them by voice or in person and press `[ ✓ IDENTICAL ]`. If they differ, press `[ ✗ DIFFERENT ]` — someone intercepted the Room Key and is sitting in the middle
+7. If no connection is established within 2 minutes, the Room Key expires: generate a new one
 
 ---
 
 ## 🧩 Deployment
 
-1. **GitHub Pages:** repository *Settings → Pages → Deploy from a branch → `main` / `(root)`*. The app is then available at `https://<user>.github.io/hard-chat/`.
-2. **TURN relay (recommended):** deploy the worker in [`turn-worker/`](turn-worker/README.md) (Cloudflare Realtime TURN or your own coturn). It hands out short-lived credentials; the secrets never touch the repository.
-3. **Configure** [`config.js`](config.js): set `turnCredentialsUrl`, optionally `forceRelay: true` (your peer never learns your IP) or a self-hosted PeerJS signaling server.
-4. **Update the CSP** in `index.html`: every host in `config.js` must also appear in `connect-src`, otherwise the browser blocks it.
+1. **GitHub Pages:** repository *Settings → Pages → Deploy from a branch → `main` / `(root)`*. The app is then available at `https://<user>.github.io/hard-chat/`. That's all that is required.
+2. **TURN relay (recommended, one line):** create a free account at [Metered](https://www.metered.ca/stun-turn), create a TURN credential and paste its API URL into `turnCredentialsUrl` in [`config.js`](config.js). The CSP already allows `*.metered.live`. The API key is meant for browser use (unlike the secret key); anyone who reads it can consume your free quota, but cannot read messages.
+3. **Optional:** `forceRelay: true` (your peer never learns your IP), a self-hosted credential endpoint ([`turn-worker/`](turn-worker/README.md): Cloudflare TURN or your own coturn — add its origin to `connect-src` in `index.html`), or a self-hosted PeerJS signaling server.
 
-Without step 2 the app still works, but only with direct (STUN) connections, which fail behind symmetric NAT.
+Without step 2 the app still works, but only with direct connections (STUN), which fail behind symmetric NAT (common on mobile networks and corporate Wi-Fi).
+
+> **Why no "free public TURN" by default?** Public relays with shared, published credentials (OpenRelay, freestun, …) are run by unknown parties, are frequently overloaded or shut down, and the static-auth Open Relay endpoint did not respond in our test (October 2026). A relay never sees message content, but it does see IP addresses — and an unreliable one just makes connections hang.
 
 ---
 
@@ -92,17 +98,17 @@ This string (the **Room Key**) is the only shared secret the two parties need to
 
 ### Deriving Keys from the Room Key
 
-Three independent values are derived from the Room Key (protocol v2):
+Three independent values are derived from the Room Key (protocol v3):
 
 ```
-master = PBKDF2(password = Room Key, salt = "ztt-v2-pbkdf2-salt", iterations = 100,000, hash = SHA-256) → 256 bit
+master = PBKDF2(password = Room Key, salt = "ztt-v3-pbkdf2-salt", iterations = 100,000, hash = SHA-256) → 256 bit
 
-hs_host→guest  = HKDF-SHA256(master, info = "ztt-v2 handshake host->guest") → AES-GCM-256, non-extractable
-hs_guest→host  = HKDF-SHA256(master, info = "ztt-v2 handshake guest->host") → AES-GCM-256, non-extractable
-peer_id        = "ztt2-" + hex(HKDF-SHA256(master, info = "ztt-v2 peer-id", 128 bit))
+hs_host→guest  = HKDF-SHA256(master, info = "ztt-v3 handshake host->guest") → AES-GCM-256, non-extractable
+hs_guest→host  = HKDF-SHA256(master, info = "ztt-v3 handshake guest->host") → AES-GCM-256, non-extractable
+peer_id        = "ztt3-" + hex(HKDF-SHA256(master, info = "ztt-v3 peer-id", 128 bit))
 ```
 
-The handshake keys are only used for the key confirmation handshake below; chat messages use per-connection keys derived from two fresh nonces. The peer ID is the only Room-Key-derived value the signaling broker ever sees; it is domain-separated from the encryption keys. Separate keys per direction make it impossible to reflect a party's own messages back to it. The keys are created as **non-extractable** `CryptoKey` objects.
+The handshake keys are only used for the key confirmation handshake below; chat messages use per-connection keys derived from an ephemeral ECDH exchange, both nonces and the Room Key. The peer ID is the only Room-Key-derived value the signaling broker ever sees; it is domain-separated from the encryption keys. Separate keys per direction make it impossible to reflect a party's own messages back to it. The keys are created as **non-extractable** `CryptoKey` objects.
 
 The Room Key generator uses rejection sampling, so every character of the 72-character alphabet is equally likely (≈617 bits of entropy).
 
@@ -120,14 +126,19 @@ The Room Key generator uses rejection sampling, so every character of the 72-cha
 ### Key Confirmation Handshake
 
 ```
-Guest → Host  : seal_hs_g2h(seq=0, {t:"hello", g:<nonce_guest, 128 bit>})            (re-sent identically until answered)
-Host  → Guest : seal_hs_h2g(seq=0, {t:"chal",  g:<nonce_guest>, n:<nonce_host>})     (re-sent identically until answered)
-Guest → Host  : seal_hs_g2h(seq=1, {t:"resp",  n:<nonce_host>})
+Guest → Host  : seal_hs_g2h(seq=0, {t:"hello", g:<nonce_guest, 128 bit>, c:SHA-256(pk_guest)})     (commitment; re-sent identically until answered)
+Host  → Guest : seal_hs_h2g(seq=0, {t:"chal",  g:<nonce_guest>, n:<nonce_host>, pk:<pk_host>})   (re-sent identically until answered)
+Guest → Host  : seal_hs_g2h(seq=1, {t:"resp",  n:<nonce_host>, pk:<pk_guest>})                  (reveal; host checks the commitment)
 
 Both sides then switch to per-connection keys and restart the sequence numbers at 0:
-key_conn_x = HKDF-SHA256(master, salt = nonce_guest || nonce_host, info = "ztt-v2 conn host->guest" / "guest->host")
+ikm        = ECDH(own private key, peer public key) || HKDF(master, "ztt-v3 ecdh binding")
+salt       = SHA-256("ztt-v3 transcript" || nonce_guest || nonce_host || pk_guest || pk_host)
+key_conn_x = HKDF-SHA256(ikm, salt, info = "ztt-v3 conn host->guest" / "guest->host")
+SAS        = HKDF-SHA256(ikm, salt, info = "ztt-v3 sas", 48 bit) → 6 × 6 bit → 6 of 64 symbols
 ```
-Each side proves possession of the Room Key **and** freshness (it echoes the other side's new nonce). Only after a correct response does the host treat the connection as authenticated. Because chat messages use keys bound to both nonces, traffic recorded on an earlier connection cannot be replayed into a later one, even with the same Room Key. Connections that do not complete the handshake within 15 seconds after the channel opens are closed, at most 8 unauthenticated attempts are handled at once, and once a peer is authenticated every further incoming connection is rejected (it can no longer replace the active one).
+The ephemeral private keys are non-extractable and discarded right after the derivation (**forward secrecy**). Each side proves possession of the Room Key **and** freshness (it echoes the other side's new nonce).
+
+**Security code (SAS):** someone who intercepted the Room Key can decrypt the handshake and substitute their own ECDH keys towards both sides. Doing so inevitably produces two *different* SAS values. Because the guest commits to its public key before it sees the host's (as in ZRTP), the attacker cannot try many keys until the codes happen to match: each attempt succeeds with a probability of only 1 in ~69 billion (36 bits). Comparing the six symbols by voice or in person therefore detects such a man-in-the-middle; the status only shows `ENCRYPTED & VERIFIED ✓` after the user confirms. Only after a correct response does the host treat the connection as authenticated. Because chat messages use keys bound to both nonces, traffic recorded on an earlier connection cannot be replayed into a later one, even with the same Room Key. Connections that do not complete the handshake within 15 seconds after the channel opens are closed, at most 8 unauthenticated attempts are handled at once, and once a peer is authenticated every further incoming connection is rejected (it can no longer replace the active one).
 
 ### ICE Negotiation (NAT Traversal)
 
@@ -139,11 +150,12 @@ Once the two Peers have "introduced" themselves, WebRTC starts ICE negotiation t
 
 **Configured ICE servers (in priority order):**
 
-- **Your own TURN relay**, with short-lived credentials fetched per session from `turnCredentialsUrl` (see `turn-worker/`: Cloudflare Realtime TURN or a self-hosted coturn using the TURN REST API scheme). The response is validated; port-53 URLs (blocked by browsers) are filtered out.
-- **STUN fallback** from `config.js` (default: `stun.cloudflare.com:3478`) if no endpoint is configured or it is unreachable.
-- Optional `forceRelay: true` sets `iceTransportPolicy: "relay"`: all traffic goes through your relay and the peer never learns your IP. Without TURN credentials the connection then fails on purpose (fail closed).
+- **TURN credential endpoint** (`turnCredentialsUrl`): your Metered account's API (returns an `iceServers` array) or your own endpoint (`turn-worker/`: Cloudflare Realtime TURN or coturn). Fetched fresh per session, validated, port-53 URLs filtered out.
+- **Additional TURN servers** (`turnServers`): fixed credentials or a coturn static-auth secret, from which the app derives time-limited credentials (TURN REST API scheme).
+- **STUN:** `relay.adminforge.de:443` and `relay2.adminforge.de:443` (adminForge states it does not log IP addresses).
+- Optional `forceRelay: true` sets `iceTransportPolicy: "relay"`: all traffic goes through the relay and the peer never learns your IP. Without a working relay the connection then fails on purpose (fail closed).
 
-All previously hardcoded relays (the original author's Metered.ca account, OpenRelay, freestun, numb.viagenie, ExpressTurn with publicly known credentials) have been removed: anyone could operate or log those shared relays.
+All previously hardcoded relays (the original author's Metered.ca account, OpenRelay, freestun, numb.viagenie, ExpressTurn with publicly known credentials) have been removed.
 
 The browser automatically tries every combination and selects the first one that establishes a working channel (standard ICE algorithm, handled internally by WebRTC).
 
@@ -163,7 +175,7 @@ The browser automatically tries every combination and selects the first one that
 Every message is individually encrypted before being sent over the DataChannel:
 
 ```
-1. header = [version=2, 0, 0, 0, seq (uint32, big endian)]      (8 bytes, seq starts at 0 per direction)
+1. header = [version=3, 0, 0, 0, seq (uint32, big endian)]      (8 bytes, seq starts at 0 per direction)
 2. IV = 12 random bytes (crypto.getRandomValues)
 3. ciphertext = AES-GCM-Encrypt(key_my_direction, IV, JSON{t, ...}, additionalData = header)
 4. packet = header || IV || ciphertext   → sent as raw ArrayBuffer over the DataChannel
@@ -183,9 +195,9 @@ Any rejected packet on an authenticated channel terminates the connection with a
 - **Replay / reordering / reflection protection** — sequence numbers are authenticated as AAD, and each direction has its own key
 
 **What this scheme does NOT cover:**
-- **Forward secrecy across sessions** — if the same Room Key were reused across multiple sessions (not the normal flow, which generates a new one every time), all those sessions would share the same master key (per-connection keys differ, but are derivable by anyone holding the Room Key)
-- **Peer identity authentication** — anyone who knows the Room Key can connect; there is no cryptographic verification of "who" is on the other end beyond possession of the shared key. Whoever obtains the Room Key first (e.g. by intercepting the out-of-band channel) can take the guest's place.
-- **Forward secrecy within a session** — whoever obtains the Room Key *and* recorded the traffic (which additionally requires breaking or bypassing WebRTC's DTLS layer) can decrypt that session.
+- **Unverified sessions** — if the security code is *not* compared, an attacker who intercepted the Room Key can still sit in the middle unnoticed. The app shows `ENCRYPTED — NOT YET VERIFIED` until the codes are confirmed.
+- **Peer identity authentication** — anyone who knows the Room Key can connect; there is no cryptographic verification of "who" is on the other end beyond possession of the shared key. Whoever obtains the Room Key first (e.g. by intercepting the out-of-band channel) can take the guest's place. The security code comparison exposes this as well: the real guest has no matching code to read out.
+- **Compromised device** — malware or a malicious browser extension on either device sees everything in plain text; no protocol can prevent that.
 
 ---
 
@@ -193,7 +205,8 @@ Any rejected packet on an authenticated channel terminates the connection with a
 
 | Data | Persistence | Notes |
 |---|---|---|
-| Room Key | None | Only in a JS variable, gone on close/reload |
+| Room Key | None | Only in a JS variable, gone on close/reload. Invite links carry it in the URL fragment, which the page removes from the address bar immediately (`history.replaceState`) |
+| ECDH private keys | None | Non-extractable, generated per connection, discarded after key derivation |
 | Derived AES-GCM keys | None | Non-extractable `CryptoKey` objects, never written to disk |
 | Chat messages | None | Only live in the DOM/RAM, no localStorage/IndexedDB |
 | Cookies | None | The project uses none at all |
@@ -231,10 +244,14 @@ Key point to understand: **encryption protects content, not connection metadata*
 |---|---|---|
 | Message content interception | MITM on TURN/network traffic | ✅ Yes — end-to-end AES-GCM |
 | Message tampering in transit | Packet manipulation | ✅ Yes — GCM authentication tag, connection is terminated |
+| Intercepted Room Key → man-in-the-middle | Attacker with the key relays and reads everything | ✅ Detectable — security code (SAS) comparison; QR handover avoids interception altogether |
+| Room Key leaked after the conversation | Decrypting recorded traffic later | ✅ Yes — forward secrecy via ephemeral ECDH |
 | Replay / reordering / reflection | Re-sending or bouncing back captured packets (e.g. by a malicious broker) | ✅ Yes — authenticated sequence numbers + per-direction keys |
 | Session hijack / DoS via second connection | Third party connects to the room ID and replaces the active connection | ✅ Yes — key confirmation handshake, one authenticated peer only, broker left after handshake |
 | Compromised CDN / supply chain | Manipulated PeerJS from a CDN steals keys | ✅ Yes — PeerJS served from the repo, SRI hash, strict CSP (no inline scripts, no foreign hosts) |
-| Leaked relay credentials | Credentials hardcoded in public code | ✅ Yes — short-lived credentials from your own worker; worker restricted by origin and rate limit |
+| Leaked relay credentials | Credentials hardcoded in public code | ⚠️ Partial — no shared credentials in the code; a Metered API key in `config.js` is public by design (quota can be consumed, content stays safe) |
+| Invite link in history/camera app | The URL with the Room Key may be stored by the scanning app or browser history | ⚠️ Partial — fragment removed from the address bar on load (the global browser history or the scanner app may still keep the original URL); key expires after 120 s or once a peer is authenticated |
+| Clickjacking | Page embedded invisibly in a foreign site (e.g. to trick a click on "IDENTICAL") | ✅ Yes — the app refuses to run inside a frame (GitHub Pages cannot send `frame-ancestors` headers) |
 | Deanonymization via IP metadata | IP↔identity correlation through third-party logs | ⚠️ Partial — `forceRelay` hides your IP from the peer; towards broker/relay a VPN is still required |
 | Abuse of the credential worker | Origin header can be forged outside browsers | ⚠️ Partial — rate limiting + short TTL, not authentication |
 | Dependency on third-party services | GitHub Pages, PeerJS broker, TURN provider — if suspended, the app stops working | ⚠️ Partial — signaling and TURN are configurable/self-hostable |
@@ -249,6 +266,8 @@ Key point to understand: **encryption protects content, not connection metadata*
 - **P2P/Signaling:** [PeerJS](https://peerjs.com/) v1.5.4 (a wrapper library over native WebRTC), vendored unmodified from the npm package into `vendor/`, pinned with an SRI hash
 - **NAT Traversal:** WebRTC ICE — own TURN relay via short-lived credentials (`turn-worker/`), STUN fallback
 - **Fonts:** Fira Code (SIL OFL), served locally from `assets/fonts/`
+- **QR codes:** [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) 1.5.2 (MIT), vendored unmodified, SRI-pinned
+- **Key exchange:** WebCrypto ECDH P-256 (ephemeral), HKDF-SHA256
 - **Hardening:** Content Security Policy (`default-src 'none'`, scripts only from the same origin, no inline scripts/handlers), `no-referrer`
 - **Hosting:** GitHub Pages (static, automatic HTTPS)
 - **Browser requirements:** WebRTC support, Web Crypto API, ES6+ — requires a secure context (HTTPS); does not work from `file://` or `content://`
@@ -263,6 +282,7 @@ Key point to understand: **encryption protects content, not connection metadata*
 4. **v4** — Detailed ICE diagnostics (candidate logging, connection states) — fixed a bug that overwrote PeerJS's internal event handlers
 5. **v5** — Timeout extended to 120s, Room Key expiry system with manual regeneration, VPN warning on splash screen, TURN credential obfuscation
 6. **v6 (fork, protocol v2)** — Security hardening: PeerJS/fonts self-hosted with SRI + strict CSP; per-direction keys (HKDF), authenticated sequence numbers, key confirmation handshake, single authenticated peer, broker disconnect after handshake; fixed stale-timer bug; removed hardcoded/public TURN credentials in favour of a self-hosted credential worker; IP-free logging by default. **Not compatible with v1–v5 clients.**
+7. **v7 (fork, protocol v3)** — Ephemeral ECDH key exchange (forward secrecy), security code (SAS) verification, QR code / invite link handover, adminForge STUN, Metered API support for TURN. **Not compatible with v6 clients.**
 
 ---
 

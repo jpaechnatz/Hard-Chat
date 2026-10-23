@@ -1,5 +1,7 @@
 # TURN-Credential-Worker
 
+> **Optional.** Für den normalen Betrieb reicht ein kostenloses Metered-Konto (siehe Haupt-README, Abschnitt Deployment). Dieser Worker ist für alle, die TURN über Cloudflare oder einen eigenen coturn-Server betreiben wollen.
+
 Ein kleiner Cloudflare Worker, der der Chat-Seite **kurzlebige** TURN-Zugangsdaten ausstellt. Die eigentlichen Geheimnisse (API-Token bzw. coturn-Secret) liegen nur im Worker und nie im öffentlichen Repo. Damit ersetzt er die früher fest eingebauten Zugangsdaten (Metered.ca des Original-Autors sowie öffentliche Gratis-Relays).
 
 ## Warum überhaupt TURN?

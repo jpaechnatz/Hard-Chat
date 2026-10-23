@@ -1,21 +1,22 @@
-// Zero-Trace Terminal — Anwendungslogik (Protokoll v2)
+// Zero-Trace Terminal — Anwendungslogik (Protokoll v3)
 // ---------------------------------------------------------------------------
 // Sicherheitsmodell (Kurzfassung, Details in technical_documentation.md):
-//  * Room Key (100 Zeichen, ~617 Bit) -> PBKDF2 -> HKDF -> drei getrennte Werte:
-//      - Schlüssel Host->Guest (AES-GCM-256, nicht exportierbar)
-//      - Schlüssel Guest->Host (AES-GCM-256, nicht exportierbar)
-//      - PeerJS-ID (128 Bit), die einzige vom Room Key abgeleitete Größe, die der Broker sieht
-//  * Jedes Paket: Header (Version + Sequenznummer) || IV || Ciphertext.
-//    Der Header ist als AAD authentifiziert. Getrennte Richtungsschlüssel verhindern
-//    Reflection, strikt fortlaufende Sequenznummern verhindern Replay/Umordnung.
-//  * Handshake (Challenge-Response) beweist Schlüsselbesitz, bevor ein Kanal als
-//    vertrauenswürdig gilt. Der Host akzeptiert genau EINEN authentifizierten Peer.
+//  * Room Key (100 Zeichen, ~617 Bit) -> PBKDF2 -> HKDF -> Handshake-Schlüssel je
+//    Richtung + PeerJS-ID (die einzige vom Room Key abgeleitete Größe, die der Broker sieht).
+//  * Handshake hello/chal/resp unter den Handshake-Schlüsseln: tauscht frische Nonces
+//    und ephemere ECDH-P-256-Schlüssel aus und beweist beidseitig den Besitz des Room Keys.
+//  * Chat-Schlüssel = HKDF(ECDH-Geheimnis || Room-Key-Bindung, salt = Transkript-Hash):
+//    Forward Secrecy und ein Sicherheitscode (6 Emojis), den beide Seiten vergleichen.
+//    Abweichende Codes = jemand hat den Room Key abgefangen und sitzt dazwischen.
+//  * Jedes Paket: Header (Version + Sequenznummer, als AAD authentifiziert) || IV || Ciphertext.
+//    Getrennte Richtungsschlüssel verhindern Reflection, Sequenznummern Replay/Umordnung.
+//  * Der Host akzeptiert genau EINEN authentifizierten Peer.
 // ---------------------------------------------------------------------------
 (() => {
     'use strict';
 
     const CFG = window.ZTT_CONFIG || {};
-    const PROTO_VERSION = 2;
+    const PROTO_VERSION = 3;
     const HEADER_LEN = 8;          // [version, 0, 0, 0, seq(uint32 BE)]
     const IV_LEN = 12;
     const TAG_LEN = 16;
@@ -129,7 +130,7 @@
         const enc = new TextEncoder();
         const pbkdfBase = await crypto.subtle.importKey('raw', enc.encode(roomKey), 'PBKDF2', false, ['deriveBits']);
         const master = await crypto.subtle.deriveBits(
-            { name: 'PBKDF2', salt: enc.encode('ztt-v2-pbkdf2-salt'), iterations: 100000, hash: 'SHA-256' },
+            { name: 'PBKDF2', salt: enc.encode('ztt-v3-pbkdf2-salt'), iterations: 100000, hash: 'SHA-256' },
             pbkdfBase, 256
         );
         const hkdfBase = await crypto.subtle.importKey('raw', master, 'HKDF', false, ['deriveKey', 'deriveBits']);
@@ -138,27 +139,112 @@
 
         // Handshake-Schlüssel: nur für hello/chal/resp. Chat-Nachrichten laufen über
         // Verbindungsschlüssel, die zusätzlich von zwei frischen Nonces abhängen.
-        const h2g = await crypto.subtle.deriveKey(hkdf('ztt-v2 handshake host->guest'), hkdfBase, aes, false, ['encrypt', 'decrypt']);
-        const g2h = await crypto.subtle.deriveKey(hkdf('ztt-v2 handshake guest->host'), hkdfBase, aes, false, ['encrypt', 'decrypt']);
-        const idBits = new Uint8Array(await crypto.subtle.deriveBits(hkdf('ztt-v2 peer-id'), hkdfBase, 128));
-        const peerId = 'ztt2-' + Array.from(idBits, (b) => b.toString(16).padStart(2, '0')).join('');
+        const h2g = await crypto.subtle.deriveKey(hkdf('ztt-v3 handshake host->guest'), hkdfBase, aes, false, ['encrypt', 'decrypt']);
+        const g2h = await crypto.subtle.deriveKey(hkdf('ztt-v3 handshake guest->host'), hkdfBase, aes, false, ['encrypt', 'decrypt']);
+        const idBits = new Uint8Array(await crypto.subtle.deriveBits(hkdf('ztt-v3 peer-id'), hkdfBase, 128));
+        const peerId = 'ztt3-' + Array.from(idBits, (b) => b.toString(16).padStart(2, '0')).join('');
 
         return role === 'host'
             ? { send: h2g, recv: g2h, base: hkdfBase, role, peerId }
             : { send: g2h, recv: h2g, base: hkdfBase, role, peerId };
     }
 
-    // Pro Verbindung frische Schlüssel: HKDF(master, salt = nonceGuest || nonceHost).
-    // Dadurch lässt sich aufgezeichneter Verkehr einer früheren Verbindung nicht in
-    // eine neue Verbindung einspielen, auch nicht mit demselben Room Key.
-    async function deriveConnectionKeys(sessKeys, nonceGuestHex, nonceHostHex) {
-        const salt = hexToBytes(nonceGuestHex + nonceHostHex);
+    // ----- Ephemerer ECDH-Schlüsseltausch (P-256) -----
+    // Pro Verbindung ein frisches Schlüsselpaar. Der private Schlüssel ist nicht
+    // exportierbar und wird nach der Ableitung verworfen -> Forward Secrecy:
+    // Wird der Room Key später bekannt, bleibt aufgezeichneter Verkehr geheim.
+    const ECDH_ALG = { name: 'ECDH', namedCurve: 'P-256' };
+
+    async function newEcdhKeyPair() {
+        const kp = await crypto.subtle.generateKey(ECDH_ALG, false, ['deriveBits']);
+        const pubRaw = new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey));
+        return { privateKey: kp.privateKey, pubRaw };
+    }
+
+    async function importPeerPublicKey(b64) {
+        if (typeof b64 !== 'string' || b64.length > 200) throw new Error('bad public key');
+        const raw = b64ToBytes(b64);
+        if (raw.length !== 65 || raw[0] !== 0x04) throw new Error('bad public key');
+        // importKey prüft, ob der Punkt auf der Kurve liegt.
+        const key = await crypto.subtle.importKey('raw', raw, ECDH_ALG, false, []);
+        return { key, raw };
+    }
+
+    // Verbindungsschlüssel = HKDF(ikm = ECDH-Geheimnis || Room-Key-Bindung,
+    //                             salt = SHA-256(Transkript), info = Richtung)
+    // Das Transkript bindet beide Nonces und beide öffentlichen Schlüssel.
+    // Zusätzlich wird ein Sicherheitscode (SAS) abgeleitet, den beide Seiten
+    // mündlich vergleichen: Wer den Room Key abgefangen hat und sich dazwischen
+    // schaltet, erzeugt zwangsläufig unterschiedliche Codes.
+    async function deriveConnectionKeys(sessKeys, ch) {
         const enc = new TextEncoder();
+        const ecdhSecret = new Uint8Array(await crypto.subtle.deriveBits(
+            { name: 'ECDH', public: ch.peerPub.key }, ch.ecdh.privateKey, 256));
+        const roomBinding = new Uint8Array(await crypto.subtle.deriveBits(
+            { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(32), info: enc.encode('ztt-v3 ecdh binding') },
+            sessKeys.base, 256));
+        const ikm = new Uint8Array(64);
+        ikm.set(ecdhSecret, 0);
+        ikm.set(roomBinding, 32);
+        ecdhSecret.fill(0);
+        roomBinding.fill(0);
+
+        const pubGuest = sessKeys.role === 'guest' ? ch.ecdh.pubRaw : ch.peerPub.raw;
+        const pubHost = sessKeys.role === 'host' ? ch.ecdh.pubRaw : ch.peerPub.raw;
+        const transcript = concatBytes(enc.encode('ztt-v3 transcript'),
+            hexToBytes(ch.nonceGuest), hexToBytes(ch.nonceHost), pubGuest, pubHost);
+        const salt = new Uint8Array(await crypto.subtle.digest('SHA-256', transcript));
+
+        const base = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveKey', 'deriveBits']);
+        ikm.fill(0);
         const params = (info) => ({ name: 'HKDF', hash: 'SHA-256', salt, info: enc.encode(info) });
         const aes = { name: 'AES-GCM', length: 256 };
-        const h2g = await crypto.subtle.deriveKey(params('ztt-v2 conn host->guest'), sessKeys.base, aes, false, ['encrypt', 'decrypt']);
-        const g2h = await crypto.subtle.deriveKey(params('ztt-v2 conn guest->host'), sessKeys.base, aes, false, ['encrypt', 'decrypt']);
-        return sessKeys.role === 'host' ? { send: h2g, recv: g2h } : { send: g2h, recv: h2g };
+        const h2g = await crypto.subtle.deriveKey(params('ztt-v3 conn host->guest'), base, aes, false, ['encrypt', 'decrypt']);
+        const g2h = await crypto.subtle.deriveKey(params('ztt-v3 conn guest->host'), base, aes, false, ['encrypt', 'decrypt']);
+        const sasBits = new Uint8Array(await crypto.subtle.deriveBits(params('ztt-v3 sas'), base, 48));
+
+        // Ephemeren privaten Schlüssel verwerfen.
+        ch.ecdh = null;
+        ch.peerPub = null;
+
+        const keys = sessKeys.role === 'host' ? { send: h2g, recv: g2h } : { send: g2h, recv: h2g };
+        keys.sas = Array.from(sasBits, (b) => SAS_EMOJI[b & 63]);
+        return keys;
+    }
+
+    // 64 Symbole (6 Bit je Symbol, 6 Symbole = 36 Bit).
+    const SAS_EMOJI = [
+        ['🐶', 'Dog'], ['🐱', 'Cat'], ['🦁', 'Lion'], ['🐎', 'Horse'], ['🦄', 'Unicorn'], ['🐷', 'Pig'], ['🐘', 'Elephant'], ['🐰', 'Rabbit'],
+        ['🐼', 'Panda'], ['🐓', 'Rooster'], ['🐧', 'Penguin'], ['🐢', 'Turtle'], ['🐟', 'Fish'], ['🐙', 'Octopus'], ['🦋', 'Butterfly'], ['🌷', 'Flower'],
+        ['🌳', 'Tree'], ['🌵', 'Cactus'], ['🍄', 'Mushroom'], ['🌏', 'Globe'], ['🌙', 'Moon'], ['☁️', 'Cloud'], ['🔥', 'Fire'], ['🍌', 'Banana'],
+        ['🍎', 'Apple'], ['🍓', 'Strawberry'], ['🌽', 'Corn'], ['🍕', 'Pizza'], ['🎂', 'Cake'], ['❤️', 'Heart'], ['😀', 'Smiley'], ['🤖', 'Robot'],
+        ['🎩', 'Hat'], ['👓', 'Glasses'], ['🔧', 'Spanner'], ['🎅', 'Santa'], ['👍', 'Thumbs Up'], ['☂️', 'Umbrella'], ['⌛', 'Hourglass'], ['⏰', 'Clock'],
+        ['🎁', 'Gift'], ['💡', 'Light Bulb'], ['📕', 'Book'], ['✏️', 'Pencil'], ['📎', 'Paperclip'], ['✂️', 'Scissors'], ['🔒', 'Lock'], ['🔑', 'Key'],
+        ['🔨', 'Hammer'], ['☎️', 'Telephone'], ['🏁', 'Flag'], ['🚂', 'Train'], ['🚲', 'Bicycle'], ['✈️', 'Aeroplane'], ['🚀', 'Rocket'], ['🏆', 'Trophy'],
+        ['⚽', 'Ball'], ['🎸', 'Guitar'], ['🎺', 'Trumpet'], ['🔔', 'Bell'], ['⚓', 'Anchor'], ['🎧', 'Headphones'], ['📁', 'Folder'], ['📌', 'Pin']
+    ];
+
+    async function sha256Hex(bytes) {
+        const d = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+        return Array.from(d, (b) => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    function concatBytes(...parts) {
+        const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+        let o = 0;
+        for (const p of parts) { out.set(p, o); o += p.length; }
+        return out;
+    }
+
+    function bytesToB64(bytes) {
+        return btoa(String.fromCharCode(...bytes));
+    }
+
+    function b64ToBytes(b64) {
+        const bin = atob(b64);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
     }
 
     function hexToBytes(hex) {
@@ -179,6 +265,10 @@
             authed: false,
             nonceGuest: null,
             nonceHost: null,
+            ecdh: null,     // eigenes ephemeres Schlüsselpaar
+            peerPub: null,  // öffentlicher Schlüssel der Gegenseite
+            peerCommit: null, // Host: SHA-256 des Guest-Schlüssels aus "hello"
+            sas: null,      // Sicherheitscode zum Vergleichen
             dead: false,
             handshakeTimer: null,
             hsSent: null,   // zuletzt gesendetes Handshake-Paket (für identischen Neuversand)
@@ -268,39 +358,73 @@
         return out;
     }
 
-    async function buildRtcConfig(statusFn) {
-        const stun = sanitizeIceServers([{ urls: CFG.stunServers || [] }]);
-        let iceServers = stun;
-        let haveTurn = false;
+    // TURN-Zugangsdaten nach dem "TURN REST API"-Schema (coturn use-auth-secret):
+    // username = "<ablaufzeit>:<label>", credential = base64(HMAC-SHA1(secret, username)).
+    // Wird für öffentliche Relays mit veröffentlichtem Static-Auth-Secret genutzt
+    // (z. B. Open Relay von Metered). Das Secret ist dort ohnehin öffentlich;
+    // die Ablaufzeit begrenzt nur die Gültigkeit der erzeugten Zugangsdaten.
+    async function staticAuthCredentials(secret, ttlSeconds) {
+        const username = `${Math.floor(Date.now() / 1000) + ttlSeconds}:ztt`;
+        const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret),
+            { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+        const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(username)));
+        return { username, credential: btoa(String.fromCharCode(...sig)) };
+    }
 
+    async function fetchEndpointIceServers() {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), TURN_FETCH_TIMEOUT_MS);
+        try {
+            const res = await fetch(CFG.turnCredentialsUrl, {
+                method: (CFG.turnCredentialsMethod || 'GET').toUpperCase() === 'POST' ? 'POST' : 'GET',
+                cache: 'no-store', credentials: 'omit',
+                referrerPolicy: 'no-referrer', signal: ctrl.signal
+            });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const json = await res.json();
+            // Akzeptiert {"iceServers":[...]} (eigener Worker) und [...] (Metered-API).
+            return sanitizeIceServers(Array.isArray(json) ? json : (json && json.iceServers));
+        } finally {
+            clearTimeout(t);
+        }
+    }
+
+    const hasRelay = (list) => list.some((s) => s.username && s.credential && s.urls.some((u) => /^turns?:/i.test(u)));
+
+    async function buildRtcConfig(statusFn) {
+        let iceServers = [];
+
+        // 1) Optional: eigener Credential-Endpunkt (hat Vorrang, wird zuerst probiert).
         if (CFG.turnCredentialsUrl) {
-            const ctrl = new AbortController();
-            const t = setTimeout(() => ctrl.abort(), TURN_FETCH_TIMEOUT_MS);
             try {
-                const res = await fetch(CFG.turnCredentialsUrl, {
-                    method: 'POST',
-                    cache: 'no-store',
-                    credentials: 'omit',
-                    referrerPolicy: 'no-referrer',
-                    signal: ctrl.signal
-                });
-                if (!res.ok) throw new Error('HTTP ' + res.status);
-                const json = await res.json();
-                const fetched = sanitizeIceServers(json && json.iceServers);
-                haveTurn = fetched.some((s) => s.urls.some((u) => /^turns?:/i.test(u)) && s.username && s.credential);
-                if (fetched.length) iceServers = fetched;
-                dbg('TURN credentials fetched, relay available:', haveTurn);
+                const fetched = await fetchEndpointIceServers();
+                iceServers.push(...fetched);
+                dbg('endpoint ICE servers:', fetched.length);
             } catch (e) {
                 dbg('TURN credential fetch failed:', e);
-                statusFn('[WARN] TURN endpoint unreachable — direct connection only');
-            } finally {
-                clearTimeout(t);
+                statusFn('[WARN] TURN endpoint unreachable — trying direct connection');
             }
         }
 
-        if (CFG.forceRelay && !haveTurn) {
+        // 2) Öffentliche TURN-Relays aus config.js (Static Auth oder feste Zugangsdaten).
+        for (const relay of (CFG.turnServers || [])) {
+            if (!relay || !relay.urls) continue;
+            let creds = {};
+            if (relay.staticAuthSecret) {
+                creds = await staticAuthCredentials(relay.staticAuthSecret, relay.ttlSeconds || 86400);
+            } else if (relay.username && relay.credential) {
+                creds = { username: relay.username, credential: relay.credential };
+            }
+            iceServers.push(...sanitizeIceServers([{ urls: relay.urls, ...creds }]));
+        }
+
+        // 3) STUN (nur IP-Ermittlung, kein Relay).
+        iceServers.push(...sanitizeIceServers([{ urls: CFG.stunServers || [] }]));
+
+        if (CFG.forceRelay && !hasRelay(iceServers)) {
             throw new Error('RELAY_REQUIRED');
         }
+        dbg('ICE servers configured:', iceServers.length, 'relay:', hasRelay(iceServers));
         return {
             iceServers,
             iceTransportPolicy: CFG.forceRelay ? 'relay' : 'all'
@@ -357,7 +481,8 @@
         const text = $('statusText');
         led.className = 'led led-' + state;
         if (state === 'yellow') { text.textContent = 'WAITING FOR PEER'; text.style.color = '#ffb000'; }
-        if (state === 'green') { text.textContent = 'SECURE P2P ACTIVE (AUTHENTICATED)'; text.style.color = '#00ff66'; }
+        if (state === 'green') { text.textContent = 'ENCRYPTED — NOT YET VERIFIED'; text.style.color = '#ffb000'; }
+        if (state === 'verified') { led.className = 'led led-green'; text.textContent = 'ENCRYPTED & VERIFIED ✓'; text.style.color = '#00ff66'; }
         if (state === 'red') { text.textContent = 'DISCONNECTED'; text.style.color = '#ff3333'; }
     }
 
@@ -392,6 +517,63 @@
         setTimeout(() => { btn.textContent = original; btn.classList.remove('flash'); }, 2000);
     }
 
+    // ----- Sicherheitscode (SAS) -----
+    function showSas(sas) {
+        const box = $('sasBox');
+        const wrap = $('sasEmojis');
+        wrap.textContent = '';
+        for (const [glyph, name] of sas) {
+            const item = document.createElement('div');
+            item.className = 'sas-emoji';
+            const g = document.createElement('span'); g.className = 'glyph'; g.textContent = glyph;
+            const n = document.createElement('span'); n.className = 'name'; n.textContent = name;
+            item.append(g, n);
+            wrap.appendChild(item);
+        }
+        box.classList.remove('verified');
+        $('sasBox').querySelector('.sas-title').textContent = '> VERIFY: compare these symbols with your peer by voice or in person';
+        show($('sasMatchBtn'), true);
+        show(box, true);
+    }
+
+    function hideSas() {
+        show($('sasBox'), false);
+        $('sasEmojis').textContent = '';
+    }
+
+    // ----- Einladungslink / QR-Code -----
+    // Der Room Key steht im Fragment (#k=...). Fragmente werden vom Browser nie an
+    // den Server übertragen; die Seite entfernt es nach dem Auslesen sofort.
+    function inviteLink(code) {
+        const base = CFG.shareBaseUrl || (location.origin + location.pathname);
+        return base + '#k=' + encodeURIComponent(code);
+    }
+
+    function renderQr(canvas, text) {
+        const qr = window.qrcode(0, 'M');
+        qr.addData(text, 'Byte');
+        qr.make();
+        const n = qr.getModuleCount();
+        const scale = Math.max(3, Math.floor(260 / n));
+        canvas.width = canvas.height = n * scale;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#000000';
+        for (let r = 0; r < n; r++) {
+            for (let c = 0; c < n; c++) {
+                if (qr.isDark(r, c)) ctx.fillRect(c * scale, r * scale, scale, scale);
+            }
+        }
+    }
+
+    function clearQr() {
+        const canvas = $('hostQrCanvas');
+        canvas.width = canvas.height = 10;
+        show($('hostQrWrap'), false);
+        $('hostQrBtn').textContent = '[ SHOW QR CODE ]';
+    }
+
     // =======================================================================
     // KANAL-LOGIK (gemeinsam für Host und Guest)
     // =======================================================================
@@ -415,9 +597,12 @@
         // Signaling wird nicht mehr gebraucht: vom Broker abmelden, P2P-Kanal bleibt bestehen.
         try { s.peer.disconnect(); } catch (e) { /* ignore */ }
 
+        s.verified = false;
         setStatus('green');
-        appendMessage('[SYS] Peer authenticated (key confirmation OK). Directional keys + replay protection active.', 'msg-system');
+        appendMessage('[SYS] Peer authenticated. Ephemeral ECDH keys, forward secrecy + replay protection active.', 'msg-system');
+        showSas(ch.sas);
         if (s.role === 'host') {
+            clearQr();
             $('hostStatusBox').textContent = '[PEER AUTHENTICATED]';
             $('hostConnectBtn').disabled = false;
         } else {
@@ -453,30 +638,41 @@
 
     // Wechsel von Handshake- auf Verbindungsschlüssel; Sequenzzähler beginnen neu.
     function switchToConnectionKeys(ch, connKeys) {
-        ch.keys = connKeys;
+        ch.sas = connKeys.sas;
+        ch.keys = { send: connKeys.send, recv: connKeys.recv };
         ch.sendSeq = 0;
         ch.recvSeq = 0;
     }
 
     // Handshake (alle Pakete unter den Handshake-Schlüsseln):
-    //   Guest -> Host : hello {g: nonceGuest}
-    //   Host  -> Guest: chal  {g: nonceGuest, n: nonceHost}   (beweist Frische + Schlüsselbesitz des Hosts)
-    //   Guest -> Host : resp  {n: nonceHost}                  (beweist Frische + Schlüsselbesitz des Guests)
-    // Danach beide: Verbindungsschlüssel = HKDF(master, nonceGuest || nonceHost).
+    //   Guest -> Host : hello {g: nonceGuest, c: SHA-256(ECDH-Public-Key Guest)}   (Commitment)
+    //   Host  -> Guest: chal  {g: nonceGuest, n: nonceHost, pk: ECDH-Public-Key Host}
+    //   Guest -> Host : resp  {n: nonceHost, pk: ECDH-Public-Key Guest}           (Aufdecken)
+    // Durch das Commitment kann ein Angreifer mit Room Key die Sicherheitscodes
+    // nicht durch Ausprobieren vieler Schlüssel angleichen (wie bei ZRTP).
+    // Danach beide: Verbindungsschlüssel aus ECDH + Room Key + Transkript (siehe deriveConnectionKeys).
     async function handleFrame(s, ch, obj) {
         if (s.role === 'host' && !ch.authed) {
             if (obj.t === 'hello' && ch.nonceHost === null) {
                 if (typeof obj.g !== 'string' || !NONCE_RE.test(obj.g)) throw new Error('bad hello');
+                if (typeof obj.c !== 'string' || !/^[0-9a-f]{64}$/.test(obj.c)) throw new Error('bad commitment');
+                ch.peerCommit = obj.c;
+                ch.ecdh = await newEcdhKeyPair();
                 ch.nonceGuest = obj.g;
                 ch.nonceHost = randomHex(16);
-                ch.hsSent = await sendFrame(ch, { t: 'chal', g: ch.nonceGuest, n: ch.nonceHost });
+                ch.hsSent = await sendFrame(ch, { t: 'chal', g: ch.nonceGuest, n: ch.nonceHost, pk: bytesToB64(ch.ecdh.pubRaw) });
                 retransmitHandshake(s, ch, () => !ch.authed);
                 return;
             }
             if (obj.t === 'resp' && ch.nonceHost !== null) {
                 if (obj.n !== ch.nonceHost) throw new Error('handshake response mismatch');
                 if (s.active) throw new Error('room already occupied');
-                switchToConnectionKeys(ch, await deriveConnectionKeys(ch.keys, ch.nonceGuest, ch.nonceHost));
+                // Commitment prüfen: der Guest hat sich auf seinen Schlüssel festgelegt,
+                // BEVOR er den des Hosts kannte (verhindert das Durchprobieren von SAS-Werten).
+                const peer = await importPeerPublicKey(obj.pk);
+                if ((await sha256Hex(peer.raw)) !== ch.peerCommit) throw new Error('commitment mismatch');
+                ch.peerPub = peer;
+                switchToConnectionKeys(ch, await deriveConnectionKeys(s.keys, ch));
                 onAuthenticated(s, ch);
                 return;
             }
@@ -486,9 +682,10 @@
             if (obj.t !== 'chal' || obj.g !== ch.nonceGuest || typeof obj.n !== 'string' || !NONCE_RE.test(obj.n)) {
                 throw new Error('unexpected or stale handshake frame');
             }
+            ch.peerPub = await importPeerPublicKey(obj.pk);
             ch.nonceHost = obj.n;
-            ch.hsSent = await sendFrame(ch, { t: 'resp', n: ch.nonceHost });
-            switchToConnectionKeys(ch, await deriveConnectionKeys(ch.keys, ch.nonceGuest, ch.nonceHost));
+            ch.hsSent = await sendFrame(ch, { t: 'resp', n: ch.nonceHost, pk: bytesToB64(ch.ecdh.pubRaw) });
+            switchToConnectionKeys(ch, await deriveConnectionKeys(s.keys, ch));
             onAuthenticated(s, ch);
             return;
         }
@@ -519,7 +716,11 @@
             }, HANDSHAKE_TIMEOUT_MS);
             if (s.role === 'guest') {
                 ch.nonceGuest = randomHex(16);
-                sendFrame(ch, { t: 'hello', g: ch.nonceGuest }).then((pkt) => {
+                newEcdhKeyPair().then((kp) => {
+                    ch.ecdh = kp;
+                    return sha256Hex(kp.pubRaw).then((commit) =>
+                        sendFrame(ch, { t: 'hello', g: ch.nonceGuest, c: commit }));
+                }).then((pkt) => {
                     ch.hsSent = pkt;
                     retransmitHandshake(s, ch, () => ch.nonceHost === null);
                 }).catch((e) => { dbg('hello send failed:', e && e.message); killChannel(s, ch); });
@@ -741,6 +942,7 @@
         appendMessage('[SYS_INIT] P2P Node Listening...', 'msg-system');
         $('messageInput').value = '';
         $('sendBtn').disabled = false;
+        hideSas();
         setStatus('yellow');
     }
 
@@ -770,7 +972,7 @@
     // PANIC PURGE
     // =======================================================================
 
-    async function panicPurge() {
+    async function panicPurge(reasonAlert) {
         const s = session;
         if (isCurrent(s) && s.active && !s.active.dead) {
             // Gegenseite informieren (best effort), dann alles abbauen.
@@ -779,6 +981,7 @@
         teardown();
 
         $('hostRoomCode').textContent = '';
+        clearQr();
         $('hostStatusBox').textContent = 'INITIALIZING P2P NODE...';
         $('hostConnectBtn').disabled = true;
         show($('hostRegenerateBtn'), false);
@@ -791,7 +994,7 @@
         try { if (navigator.clipboard) await navigator.clipboard.writeText(' '); } catch (e) { /* ignore */ }
 
         showPage('menu');
-        alert('[PANIC PURGE COMPLETE] Connections closed, session keys released, chat history wiped. Clipboard overwritten (if permitted). Note: browsers cannot guarantee memory is physically overwritten — close the tab for best effect.');
+        alert(typeof reasonAlert === 'string' ? reasonAlert : '[PANIC PURGE COMPLETE] Connections closed, session keys released, chat history wiped. Clipboard overwritten (if permitted). Note: browsers cannot guarantee memory is physically overwritten — close the tab for best effect.');
     }
 
     // =======================================================================
@@ -805,6 +1008,7 @@
     function backToMenu() {
         teardown();
         $('hostRoomCode').textContent = '';
+        clearQr();
         resetGuestView();
         showPage('menu');
     }
@@ -816,14 +1020,36 @@
     $('menuJoinBtn').addEventListener('click', () => { teardown(); resetGuestView(); showPage('join-setup'); });
 
     $('hostCopyBtn').addEventListener('click', async (ev) => {
+        const btn = ev.currentTarget;
         const code = $('hostRoomCode').textContent;
         if (!code) return;
         const ok = await writeClipboard(code);
-        flashButton(ev.currentTarget, ok ? '[ COPIED! ]' : '[ COPY FAILED ]');
+        flashButton(btn, ok ? '[ COPIED! ]' : '[ COPY FAILED ]');
+    });
+    $('hostCopyLinkBtn').addEventListener('click', async (ev) => {
+        const btn = ev.currentTarget;
+        const code = $('hostRoomCode').textContent;
+        if (!code) return;
+        const ok = await writeClipboard(inviteLink(code));
+        flashButton(btn, ok ? '[ LINK COPIED! ]' : '[ COPY FAILED ]');
+    });
+    $('hostQrBtn').addEventListener('click', () => {
+        const code = $('hostRoomCode').textContent;
+        if (!code) return;
+        if (!$('hostQrWrap').classList.contains('hidden')) { clearQr(); return; }
+        try {
+            renderQr($('hostQrCanvas'), inviteLink(code));
+            show($('hostQrWrap'), true);
+            $('hostQrBtn').textContent = '[ HIDE QR CODE ]';
+        } catch (e) {
+            dbg('QR render failed', e);
+            flashButton($('hostQrBtn'), '[ QR FAILED ]');
+        }
     });
     $('hostConnectBtn').addEventListener('click', () => {
         if (!session || !session.active) return;
         $('hostRoomCode').textContent = ''; // Room Key wird nach dem Handshake nicht mehr gebraucht
+        clearQr();
         showPage('chat-room');
         $('messageInput').focus();
     });
@@ -850,19 +1076,63 @@
     $('joinRetryBtn').addEventListener('click', () => { teardown(); resetGuestView(); });
     $('joinBackBtn').addEventListener('click', backToMenu);
 
-    $('panicBtn').addEventListener('click', panicPurge);
+    $('panicBtn').addEventListener('click', () => panicPurge());
+
+    $('sasMatchBtn').addEventListener('click', () => {
+        const s = session;
+        if (!isCurrent(s) || !s.active) return;
+        s.verified = true;
+        $('sasBox').classList.add('verified');
+        $('sasBox').querySelector('.sas-title').textContent = '> VERIFIED: symbols confirmed identical by you';
+        show($('sasMatchBtn'), false);
+        setStatus('verified');
+        appendMessage('[SYS] Security code confirmed. No one is in the middle.', 'msg-system');
+    });
+    $('sasMismatchBtn').addEventListener('click', () => {
+        panicPurge('[SECURITY ALERT] The security codes differ: someone has probably intercepted the Room Key and is sitting between you and your peer. The session was terminated. Create a new Room Key and hand it over through a different channel (ideally in person via QR code).');
+    });
     $('sendBtn').addEventListener('click', sendMessage);
     $('messageInput').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') sendMessage(); });
 
     $('donateBtn').addEventListener('click', async (ev) => {
+        const btn = ev.currentTarget;
         const ok = await writeClipboard($('donateAddress').textContent);
-        flashButton(ev.currentTarget, ok ? '[ ✓ ADDRESS COPIED! ]' : '[ COPY FAILED ]');
+        flashButton(btn, ok ? '[ ✓ ADDRESS COPIED! ]' : '[ COPY FAILED ]');
     });
+
+    // Schutz gegen Einbetten in fremde Seiten (Clickjacking): GitHub Pages kann keine
+    // frame-ancestors-Header setzen, daher Prüfung im Skript.
+    if (window.top !== window.self) {
+        document.body.textContent = 'This page must not be embedded in another site.';
+        throw new Error('framed');
+    }
+
+    // Einladungslink: Room Key aus dem Fragment übernehmen und das Fragment sofort
+    // aus Adresszeile und aktuellem Verlaufseintrag entfernen.
+    function consumeInviteFragment() {
+        const m = /^#k=([^&]+)/.exec(location.hash || '');
+        if (!m) return;
+        let code = '';
+        try { code = decodeURIComponent(m[1]); } catch (e) { code = ''; }
+        try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { location.hash = ''; }
+        if (!isValidRoomKey(code)) return;
+        if (typeof window.Peer !== 'function' || !window.isSecureContext) return;
+        dismissSplash();
+        teardown();
+        resetGuestView();
+        showPage('join-setup');
+        $('joinRoomCode').value = code;
+        $('joinStatusBox').textContent = 'ROOM KEY RECEIVED VIA INVITE LINK...';
+        startGuest(code);
+    }
+    consumeInviteFragment();
+    // Link in einem bereits geöffneten Tab (nur das Fragment ändert sich, kein Neuladen).
+    window.addEventListener('hashchange', consumeInviteFragment);
 
     if (!window.isSecureContext || !window.crypto || !crypto.subtle) {
         alert('This page must be served over HTTPS (secure context required for Web Crypto / WebRTC).');
     }
-    if (typeof window.Peer !== 'function') {
+    if (typeof window.Peer !== 'function' || typeof window.qrcode !== 'function') {
         alert('PeerJS failed to load (integrity check failed or file missing). Refusing to continue.');
     }
 })();
