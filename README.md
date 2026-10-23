@@ -49,7 +49,9 @@ The browser always tries a **direct connection** first (IPv6, or IPv4 with STUN-
 - **Public credentials:** the credentials in `config.js` are only Base64-obfuscated, which keeps automated scanners away but not humans. Anyone can use them, and the free tier (500 MB/month) simply stops when exhausted. Text chat needs only a tiny fraction of that.
 - **Hide your IP from your peer:** set `forceRelay: true`. Then all traffic goes through the relay.
 
-If neither a direct path nor the relay works, the app shows `[NO DIRECT PATH]` / `[ICE FAILED]` after about 30 seconds.
+If neither a direct path nor the relay works, the app shows `[NO PATH]` after 45 seconds at the latest.
+
+**Troubleshooting:** open `[3] NETWORK CHECK` on *both* devices. It checks the signaling server, STUN (IPv4/IPv6, NAT type) and whether data really flows through the relay, and then tells you whether this network can work. No IP addresses are displayed.
 
 **Your own copy:** create your own TURN credentials (Metered, or your own coturn; see [`turn-worker/README.md`](turn-worker/README.md)) and replace the entry in `config.js`. Please don't use the credentials of this deployment.
 

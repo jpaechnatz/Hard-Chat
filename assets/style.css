@@ -325,3 +325,10 @@ hr { border: 0; border-top: 1px dashed #00ff66; margin: 16px 0; width: 100%; }
 .sas-emoji .name { font-size: 10px; color: #00b347; text-transform: uppercase; }
 .sas-actions { display: flex; gap: 6px; }
 .sas-actions button { margin: 0; }
+
+/* Netzwerk-Check */
+.net-results { white-space: pre-wrap; text-align: left; font-size: 11px; line-height: 1.6; }
+.net-ok { color: #00ff66; }
+.net-fail { color: #ff3333; }
+.net-info { color: #ffb000; }
+#netVerdict { word-break: normal; overflow-wrap: anywhere; line-height: 1.5; }
