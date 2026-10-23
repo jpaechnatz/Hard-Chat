@@ -585,6 +585,143 @@
         $('hostQrBtn').textContent = '[ SHOW QR CODE ]';
     }
 
+    // ----- Netzwerk-Check -----
+    // Prüft lokal, ob Signaling, STUN (IPv4/IPv6, NAT-Typ) und das TURN-Relay
+    // erreichbar sind. Zeigt keine IP-Adressen an.
+    let netCheckRunning = false;
+
+    function gatherCandidates(iceServers, policy, ms) {
+        return new Promise(async (resolve) => {
+            const out = [];
+            let pc;
+            try {
+                pc = new RTCPeerConnection({ iceServers, iceTransportPolicy: policy });
+                pc.createDataChannel('probe');
+                pc.onicecandidate = (e) => { if (e.candidate) out.push(e.candidate); };
+                await pc.setLocalDescription(await pc.createOffer());
+            } catch (e) { resolve(out); return; }
+            const done = () => { try { pc.close(); } catch (e) { /* ignore */ } resolve(out); };
+            const t = setTimeout(done, ms);
+            pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') { clearTimeout(t); done(); } };
+        });
+    }
+
+    async function relayLoopback(iceServers, ms) {
+        const cfg = { iceServers, iceTransportPolicy: 'relay' };
+        const a = new RTCPeerConnection(cfg);
+        const b = new RTCPeerConnection(cfg);
+        try {
+            a.onicecandidate = (e) => { if (e.candidate) b.addIceCandidate(e.candidate).catch(() => {}); };
+            b.onicecandidate = (e) => { if (e.candidate) a.addIceCandidate(e.candidate).catch(() => {}); };
+            const dc = a.createDataChannel('loop');
+            const received = new Promise((r) => { b.ondatachannel = (e) => { e.channel.onmessage = () => r(true); }; });
+            const opened = new Promise((r) => { dc.onopen = () => { dc.send('ping'); r(true); }; });
+            await a.setLocalDescription(await a.createOffer());
+            await b.setRemoteDescription(a.localDescription);
+            await b.setLocalDescription(await b.createAnswer());
+            await a.setRemoteDescription(b.localDescription);
+            return await Promise.race([opened.then(() => received), new Promise((r) => setTimeout(() => r(false), ms))]);
+        } catch (e) {
+            return false;
+        } finally {
+            try { a.close(); } catch (e) { /* ignore */ }
+            try { b.close(); } catch (e) { /* ignore */ }
+        }
+    }
+
+    async function runNetworkCheck() {
+        if (netCheckRunning) return;
+        netCheckRunning = true;
+        const box = $('netResults');
+        const verdictBox = $('netVerdict');
+        box.textContent = '';
+        show(verdictBox, false);
+        const line = (cls, text) => {
+            const d = document.createElement('div');
+            d.className = cls;
+            d.textContent = text;
+            box.appendChild(d);
+        };
+        $('netRunBtn').disabled = true;
+        try {
+            const runningLine = document.createElement('div');
+            runningLine.className = 'net-info';
+            runningLine.textContent = '> Running checks (about 20 s)...';
+            box.appendChild(runningLine);
+
+            // 1) Signaling-Server
+            const sig = CFG.signaling || {};
+            let sigOk = false;
+            try {
+                const url = `${sig.secure === false ? 'http' : 'https'}://${sig.host}:${sig.port}${(sig.path || '/').replace(/\/$/, '')}/${sig.key || 'peerjs'}/id?ts=${Date.now()}`;
+                const res = await fetch(url, { cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer' });
+                sigOk = res.ok;
+            } catch (e) { sigOk = false; }
+            line(sigOk ? 'net-ok' : 'net-fail', `[${sigOk ? ' OK ' : 'FAIL'}] Signaling server (${sig.host})`);
+
+            // 2) STUN: IPv4/IPv6 und NAT-Verhalten
+            const stun = sanitizeIceServers([{ urls: CFG.stunServers || [] }]);
+            const stunCands = stun.length ? await gatherCandidates(stun.flatMap((sv) => sv.urls.map((u) => ({ urls: u }))), 'all', 6000) : [];
+            const srflx = stunCands.filter((c) => c.type === 'srflx');
+            const isV6 = (c) => (c.address || '').includes(':');
+            const v4 = srflx.filter((c) => !isV6(c));
+            const hasV6 = srflx.some(isV6);
+            const ports = {};
+            v4.forEach((c) => { (ports[c.relatedPort] = ports[c.relatedPort] || new Set()).add(c.port); });
+            const symmetric = Object.values(ports).some((set) => set.size > 1);
+            line(v4.length ? 'net-ok' : 'net-fail', `[${v4.length ? ' OK ' : 'FAIL'}] STUN via IPv4${v4.length ? (symmetric ? ' — strict (symmetric) NAT' : ' — NAT allows hole punching') : ' — UDP probably blocked'}`);
+            line(hasV6 ? 'net-ok' : 'net-info', `[${hasV6 ? ' OK ' : 'INFO'}] IPv6 ${hasV6 ? 'available' : 'not available'}`);
+
+            // 3) TURN-Relay
+            let relayCands = [];
+            let relayLoop = false;
+            let haveRelayCfg = false;
+            try {
+                const rtc = await buildRtcConfig(() => {});
+                const relays = rtc.iceServers.filter((sv) => sv.username && sv.credential && sv.urls.some((u) => /^turns?:/i.test(u)));
+                haveRelayCfg = relays.length > 0;
+                if (haveRelayCfg) {
+                    relayCands = (await gatherCandidates(relays, 'relay', 10000)).filter((c) => c.type === 'relay');
+                    if (relayCands.length) relayLoop = await relayLoopback(relays, 10000);
+                }
+            } catch (e) { /* ignore */ }
+            if (!haveRelayCfg) {
+                line('net-info', '[INFO] No TURN relay configured');
+            } else {
+                const proto = [...new Set(relayCands.map((c) => c.relayProtocol || c.protocol))].join('/');
+                line(relayCands.length ? 'net-ok' : 'net-fail', `[${relayCands.length ? ' OK ' : 'FAIL'}] TURN relay reachable${proto ? ' (' + proto + ')' : ''}`);
+                if (relayCands.length) line(relayLoop ? 'net-ok' : 'net-fail', `[${relayLoop ? ' OK ' : 'FAIL'}] Data through relay`);
+            }
+
+            // Fazit
+            let verdict;
+            let cls;
+            if (!sigOk) {
+                verdict = 'This network blocks the signaling server — the app cannot work here. Try another network or mobile data.';
+                cls = 'net-fail';
+            } else if (relayLoop) {
+                verdict = 'Good: the relay works from this network. Connections should succeed (if the other device can reach the relay too).';
+                cls = 'net-ok';
+            } else if (v4.length && !symmetric) {
+                verdict = 'Relay not usable here, but direct connections are possible in many cases.';
+                cls = 'net-info';
+            } else if (hasV6) {
+                verdict = 'Relay not usable here. A direct connection only works if the other device also has IPv6.';
+                cls = 'net-info';
+            } else {
+                verdict = 'Relay blocked and NAT/firewall strict: connections from this network will most likely fail. A firewall or TLS inspection probably blocks WebRTC/TURN. Use mobile data.';
+                cls = 'net-fail';
+            }
+            runningLine.textContent = '> Checks complete.';
+            verdictBox.className = 'code-box ' + cls;
+            verdictBox.textContent = '> ' + verdict;
+            show(verdictBox, true);
+        } finally {
+            $('netRunBtn').disabled = false;
+            netCheckRunning = false;
+        }
+    }
+
     // =======================================================================
     // KANAL-LOGIK (gemeinsam für Host und Guest)
     // =======================================================================
@@ -713,6 +850,13 @@
     function attachChannel(s, conn, statusFn) {
         const ch = makeChannel(conn, s.keys);
         s.candidates.add(ch);
+
+        // Kommt der Datenkanal nicht zustande, nicht endlos "negotiating" anzeigen.
+        sTimeout(s, () => {
+            if (!ch.dead && !conn.open && !ch.authed) {
+                statusFn('[NO PATH] No connection after 45 s — a firewall probably blocks it. Run [3] NETWORK CHECK on both devices.');
+            }
+        }, 45000);
 
         conn.on('open', () => {
             if (!isCurrent(s) || ch.dead) return;
@@ -1029,6 +1173,9 @@
 
     $('menuHostBtn').addEventListener('click', startHosting);
     $('menuJoinBtn').addEventListener('click', () => { teardown(); resetGuestView(); showPage('join-setup'); });
+    $('menuNetBtn').addEventListener('click', () => { teardown(); showPage('net-check'); runNetworkCheck(); });
+    $('netRunBtn').addEventListener('click', () => runNetworkCheck());
+    $('netBackBtn').addEventListener('click', () => showPage('menu'));
 
     $('hostCopyBtn').addEventListener('click', async (ev) => {
         const btn = ev.currentTarget;

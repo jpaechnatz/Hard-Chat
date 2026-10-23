@@ -31,6 +31,8 @@
         <button id="menuHostBtn">[1] INITIALIZE ROOM (HOST)</button>
         <hr>
         <button id="menuJoinBtn">[2] CONNECT TO ROOM (GUEST)</button>
+        <hr>
+        <button id="menuNetBtn" class="btn-copy">[3] NETWORK CHECK</button>
         <div class="brand-footer">P2P · E2E ENCRYPTED · NO ACCOUNTS</div>
     </div>
 
@@ -59,6 +61,16 @@
     </div>
 
     <!-- GUEST SETUP -->
+    <div class="container" id="net-check">
+        <h2>&gt; NETWORK_CHECK</h2>
+        <label>&gt; CAN THIS NETWORK REACH YOUR PEER?</label>
+        <div class="code-box net-results" id="netResults">READY.</div>
+        <div class="code-box hidden" id="netVerdict"></div>
+        <button id="netRunBtn">[ RUN CHECK ]</button>
+        <button id="netBackBtn" class="btn-full">[ BACK TO MENU ]</button>
+        <div class="qr-hint">Runs locally in your browser. No IP addresses are shown or sent anywhere except to the STUN/TURN servers being tested.</div>
+    </div>
+
     <div class="container" id="join-setup">
         <h2>&gt; GUEST_CONFIG_MODE</h2>
 
