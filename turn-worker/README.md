@@ -1,6 +1,6 @@
 # TURN-Credential-Worker
 
-> **Optional.** Für den normalen Betrieb reicht ein kostenloses Metered-Konto (siehe Haupt-README, Abschnitt Deployment). Dieser Worker ist für alle, die TURN über Cloudflare oder einen eigenen coturn-Server betreiben wollen.
+> **Optional.** Standardmäßig kommt Hard-Chat ohne TURN aus (nur Direktverbindungen). Dieser Worker ist für alle, die ein Relay über einen eigenen coturn-Server (Variante B, empfohlen) oder Cloudflare TURN (Variante A, US-Anbieter mit Konto) betreiben wollen.
 
 Ein kleiner Cloudflare Worker, der der Chat-Seite **kurzlebige** TURN-Zugangsdaten ausstellt. Die eigentlichen Geheimnisse (API-Token bzw. coturn-Secret) liegen nur im Worker und nie im öffentlichen Repo. Damit ersetzt er die früher fest eingebauten Zugangsdaten (Metered.ca des Original-Autors sowie öffentliche Gratis-Relays).
 
@@ -8,7 +8,7 @@ Ein kleiner Cloudflare Worker, der der Chat-Seite **kurzlebige** TURN-Zugangsdat
 
 Ohne TURN klappt die Verbindung nur, wenn beide Seiten sich direkt erreichen (STUN/Hole-Punching). Hinter symmetrischem NAT (häufig im Mobilfunk und in Firmennetzen) braucht es ein Relay. Der TURN-Betreiber sieht IP-Adressen und Datenmenge, aber **keine Inhalte**, weil die Nachrichten Ende-zu-Ende verschlüsselt sind.
 
-## Variante A: Cloudflare Realtime TURN (am einfachsten)
+## Variante A: Cloudflare Realtime TURN
 
 1. Im Cloudflare-Dashboard unter **Realtime → TURN Server** einen TURN-Key anlegen. Notiere **Key ID** und **API Token**.
 2. Worker deployen:
@@ -23,12 +23,28 @@ Ohne TURN klappt die Verbindung nur, wenn beide Seiten sich direkt erreichen (ST
 
 ## Variante B: eigener coturn-Server (volle Kontrolle)
 
-coturn-Konfiguration (Auszug):
+coturn-Konfiguration (Auszug, mit Schutz gegen Missbrauch als Proxy):
 ```
 use-auth-secret
 static-auth-secret=<langes-zufälliges-secret>
 realm=turn.example.org
+# Für Text-Chat reichen wenige kbit/s — als Gratis-Proxy wird der Server so uninteressant
+max-bps=64000
+total-quota=20
+user-quota=4
+# Niemals ins Heimnetz/Loopback weiterleiten
+no-multicast-peers
+denied-peer-ip=0.0.0.0-0.255.255.255
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
+denied-peer-ip=169.254.0.0-169.254.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=::1
+denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
 ```
+Ohne Worker geht es auch direkt: Server und Secret in `config.js` unter `turnServers` eintragen (`staticAuthSecret`). Das Secret ist dann öffentlich — die Limits oben sind dann Pflicht.
 Dann in `wrangler.toml` `COTURN_URLS` setzen und das Secret hinterlegen:
 ```bash
 npx wrangler secret put COTURN_SECRET

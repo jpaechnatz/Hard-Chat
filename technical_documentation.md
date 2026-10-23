@@ -90,8 +90,9 @@ Once the two Peers have "introduced" themselves, WebRTC starts ICE negotiation t
 
 **Configured ICE servers (in priority order):**
 
-- **TURN credential endpoint** (`turnCredentialsUrl`): your Metered account's API (returns an `iceServers` array) or your own endpoint (`turn-worker/`: Cloudflare Realtime TURN or coturn). Fetched fresh per session, validated, port-53 URLs filtered out.
-- **Additional TURN servers** (`turnServers`): fixed credentials or a coturn static-auth secret, from which the app derives time-limited credentials (TURN REST API scheme).
+- **Default: no TURN relay.** Connections are direct only (host/IPv6 and STUN-assisted candidates). If no direct path exists, the app says so (`[NO DIRECT PATH]`) instead of hanging.
+- **Optional TURN credential endpoint** (`turnCredentialsUrl`): your own endpoint (`turn-worker/`: coturn or Cloudflare Realtime TURN), returning `{iceServers:[…]}` or a plain array. Fetched fresh per session, validated, port-53 URLs filtered out.
+- **Optional own TURN servers** (`turnServers`): fixed credentials or a coturn static-auth secret, from which the app derives time-limited credentials (TURN REST API scheme). Note that such a secret is public in `config.js`; run coturn with a bandwidth cap and `denied-peer-ip` for private ranges.
 - **STUN:** `relay.adminforge.de:443` and `relay2.adminforge.de:443` (adminForge states it does not log IP addresses).
 - Optional `forceRelay: true` sets `iceTransportPolicy: "relay"`: all traffic goes through the relay and the peer never learns your IP. Without a working relay the connection then fails on purpose (fail closed).
 
@@ -189,7 +190,8 @@ Key point to understand: **encryption protects content, not connection metadata*
 | Replay / reordering / reflection | Re-sending or bouncing back captured packets (e.g. by a malicious broker) | ✅ Yes — authenticated sequence numbers + per-direction keys |
 | Session hijack / DoS via second connection | Third party connects to the room ID and replaces the active connection | ✅ Yes — key confirmation handshake, one authenticated peer only, broker left after handshake |
 | Compromised CDN / supply chain | Manipulated PeerJS from a CDN steals keys | ✅ Yes — PeerJS served from the repo, SRI hash, strict CSP (no inline scripts, no foreign hosts) |
-| Leaked relay credentials | Credentials hardcoded in public code | ⚠️ Partial — no shared credentials in the code; a Metered API key in `config.js` is public by design (quota can be consumed, content stays safe) |
+| Leaked relay credentials | Credentials hardcoded in public code | ✅ Yes — no relay credentials in the default configuration |
+| No connection behind strict firewalls | Without TURN, symmetric NAT / blocked UDP prevents a direct path | ⚠️ Accepted trade-off — clear error message; optional own TURN relay |
 | Invite link in history/camera app | The URL with the Room Key may be stored by the scanning app or browser history | ⚠️ Partial — fragment removed from the address bar on load (the global browser history or the scanner app may still keep the original URL); key expires after 120 s or once a peer is authenticated |
 | Clickjacking | Page embedded invisibly in a foreign site (e.g. to trick a click on "IDENTICAL") | ✅ Yes — the app refuses to run inside a frame (GitHub Pages cannot send `frame-ancestors` headers) |
 | Deanonymization via IP metadata | IP↔identity correlation through third-party logs | ⚠️ Partial — `forceRelay` hides your IP from the peer; towards broker/relay a VPN is still required |
@@ -220,7 +222,7 @@ Key point to understand: **encryption protects content, not connection metadata*
 - The page must be served over **HTTPS** (GitHub Pages guarantees this automatically) — it **will not work** if opened as a local file (`content://`, `file://`) due to Secure Context restrictions on the Web Crypto API and WebRTC
 - Both parties must have the page open **at the same time** during the connection attempt (signaling is not persistent/asynchronous)
 - The Room Key must be copied **in full, exactly 100 characters**, with no extra spaces or line breaks introduced by copy-paste
-- For connections behind restrictive NATs: a configured TURN relay (`config.js` → `turnCredentialsUrl`, e.g. a free Metered account)
+- A network that permits direct peer-to-peer connections on both sides (most home and mobile networks; often not company, hotel or guest Wi-Fi) — or an own TURN relay
 - Both parties must use the same protocol version (v7/protocol v3 is not compatible with earlier versions)
 
 ---
@@ -233,7 +235,7 @@ Key point to understand: **encryption protects content, not connection metadata*
 4. **v4** — Detailed ICE diagnostics (candidate logging, connection states) — fixed a bug that overwrote PeerJS's internal event handlers
 5. **v5** — Timeout extended to 120s, Room Key expiry system with manual regeneration, VPN warning on splash screen, TURN credential obfuscation
 6. **v6 (fork, protocol v2)** — Security hardening: PeerJS/fonts self-hosted with SRI + strict CSP; per-direction keys (HKDF), authenticated sequence numbers, key confirmation handshake, single authenticated peer, broker disconnect after handshake; fixed stale-timer bug; removed hardcoded/public TURN credentials in favour of a self-hosted credential worker; IP-free logging by default. **Not compatible with v1–v5 clients.**
-7. **v7 (fork, protocol v3)** — Ephemeral ECDH key exchange (forward secrecy), security code (SAS) verification, QR code / invite link handover, adminForge STUN, Metered API support for TURN. **Not compatible with v6 clients.**
+7. **v7 (fork, protocol v3)** — Ephemeral ECDH key exchange (forward secrecy), security code (SAS) verification, QR code / invite link handover, adminForge STUN, no third-party TURN by default (optional own relay). **Not compatible with v6 clients.**
 
 ---
 

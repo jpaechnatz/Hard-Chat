@@ -5,11 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!--
       Content Security Policy: nur eigene Dateien, keine Inline-Skripte, keine Fremd-CDNs.
-      connect-src enthält den PeerJS-Signaling-Server und die Metered-TURN-API (*.metered.live).
-      Wer einen anderen TURN-Credential-Endpunkt nutzt (z. B. turn-worker/), trägt ihn hier zusätzlich ein:
+      connect-src enthält nur den PeerJS-Signaling-Server. Wer einen TURN-Credential-Endpunkt
+      nutzt (z. B. turn-worker/), trägt ihn hier zusätzlich ein:
         ... https://hard-chat-turn.DEIN-ACCOUNT.workers.dev;
     -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src https://0.peerjs.com wss://0.peerjs.com https://*.metered.live; base-uri 'none'; form-action 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src https://0.peerjs.com wss://0.peerjs.com; base-uri 'none'; form-action 'none'">
     <meta name="referrer" content="no-referrer">
     <title>[ZERO-TRACE TERMINAL v3.0 - HARDENED]</title>
     <link rel="stylesheet" href="assets/style.css">

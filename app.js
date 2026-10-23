@@ -360,9 +360,9 @@
 
     // TURN-Zugangsdaten nach dem "TURN REST API"-Schema (coturn use-auth-secret):
     // username = "<ablaufzeit>:<label>", credential = base64(HMAC-SHA1(secret, username)).
-    // Wird für öffentliche Relays mit veröffentlichtem Static-Auth-Secret genutzt
-    // (z. B. Open Relay von Metered). Das Secret ist dort ohnehin öffentlich;
-    // die Ablaufzeit begrenzt nur die Gültigkeit der erzeugten Zugangsdaten.
+    // Für einen eigenen coturn mit "use-auth-secret". Achtung: Das Secret steht dann
+    // in der öffentlichen config.js; die Ablaufzeit begrenzt nur die Gültigkeit der
+    // erzeugten Zugangsdaten. coturn daher mit Bandbreitenlimit betreiben.
     async function staticAuthCredentials(secret, ttlSeconds) {
         const username = `${Math.floor(Date.now() / 1000) + ttlSeconds}:ztt`;
         const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret),
@@ -382,7 +382,7 @@
             });
             if (!res.ok) throw new Error('HTTP ' + res.status);
             const json = await res.json();
-            // Akzeptiert {"iceServers":[...]} (eigener Worker) und [...] (Metered-API).
+            // Akzeptiert {"iceServers":[...]} (eigener Worker) und ein reines Array [...].
             return sanitizeIceServers(Array.isArray(json) ? json : (json && json.iceServers));
         } finally {
             clearTimeout(t);
@@ -446,7 +446,11 @@
         pc.addEventListener('iceconnectionstatechange', () => {
             const state = pc.iceConnectionState;
             dbg('[ICE]', label, state);
-            if (state === 'failed') statusFn('[ICE FAILED] check TURN/network');
+            if (state === 'failed') {
+                statusFn(hasRelay((conn.peerConnection.getConfiguration().iceServers) || [])
+                    ? '[ICE FAILED] No path found, even via relay — check network'
+                    : '[NO DIRECT PATH] A firewall/NAT blocks direct connections. Try another network (e.g. mobile data instead of guest/company Wi-Fi) or configure a TURN relay.');
+            }
             else if (state === 'checking') statusFn('NEGOTIATING ICE...');
         });
         if (CFG.debug) {

@@ -1,22 +1,19 @@
 // Zero-Trace Terminal — Konfiguration
 // ---------------------------------------------------------------------------
-// Die App läuft ohne Änderungen. Für Verbindungen hinter restriktiven Netzen
-// (Mobilfunk, Firmen-WLAN) brauchst du nur EINE Zeile: turnCredentialsUrl.
+// Die App läuft ohne Änderungen: direkte Verbindungen, kein Relay eines Dritten.
+// Alles hier ist optional.
 // ---------------------------------------------------------------------------
 window.ZTT_CONFIG = Object.freeze({
 
-    // TURN-Relay: leitet die Verbindung weiter, wenn keine direkte Verbindung möglich ist.
-    // Ein Relay sieht IP-Adressen und Datenmenge, aber KEINE Inhalte: Nachrichten
-    // sind Ende-zu-Ende verschlüsselt (ECDH + AES-GCM).
+    // Standard: KEIN TURN-Relay. Die App verbindet direkt (IPv6 oder IPv4 mit
+    // Hole-Punching über STUN). Das klappt in den meisten Heim- und Mobilfunknetzen,
+    // scheitert aber oft in Firmen-, Hotel- und Gäste-WLANs mit strikter Firewall.
     //
-    // Empfohlen: kostenloses Konto bei Metered (https://www.metered.ca/stun-turn),
-    // dort eine TURN-Credential anlegen und die angezeigte API-URL hier eintragen:
-    //   turnCredentialsUrl: "https://DEIN-APPNAME.metered.live/api/v1/turn/credentials?apiKey=DEIN_API_KEY",
-    // Der API-Key ist laut Metered für den Einsatz im Browser gedacht (nicht der Secret Key!).
-    // *.metered.live ist in der Content Security Policy bereits freigegeben.
-    //
-    // Alternativ eigener Endpunkt (turn-worker/), dann zusätzlich in index.html unter
-    // connect-src eintragen und ggf. turnCredentialsMethod: "POST".
+    // Optional: eigener TURN-Server. Ein Relay sieht IP-Adressen und Datenmenge,
+    // aber KEINE Inhalte (Ende-zu-Ende-Verschlüsselung mit ECDH + AES-GCM).
+    //   a) Endpunkt, der kurzlebige Zugangsdaten liefert (z. B. turn-worker/):
+    //      URL hier eintragen UND in index.html unter connect-src ergänzen.
+    //   b) Eigener coturn mit "use-auth-secret": unten in turnServers eintragen.
     turnCredentialsUrl: "",
     turnCredentialsMethod: "GET",
 
