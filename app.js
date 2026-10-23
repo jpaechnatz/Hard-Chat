@@ -414,6 +414,13 @@
                 creds = await staticAuthCredentials(relay.staticAuthSecret, relay.ttlSeconds || 86400);
             } else if (relay.username && relay.credential) {
                 creds = { username: relay.username, credential: relay.credential };
+            } else if (relay.usernameB64 && relay.credentialB64) {
+                // Nur Verschleierung gegen automatische Repo-Scanner, keine Sicherheit.
+                try {
+                    creds = { username: atob(relay.usernameB64), credential: atob(relay.credentialB64) };
+                } catch (e) {
+                    dbg('invalid base64 TURN credentials');
+                }
             }
             iceServers.push(...sanitizeIceServers([{ urls: relay.urls, ...creds }]));
         }

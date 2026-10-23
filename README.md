@@ -16,7 +16,7 @@ No accounts, no message server, no history.
 - 🔐 **End-to-end encrypted:** AES-GCM-256 with fresh keys for every connection (ephemeral ECDH P-256 → forward secrecy).
 - 🗣️ **Man-in-the-middle detection:** both sides see six symbols (e.g. 🐶 Dog · 🔑 Key · …) and compare them by voice or in person.
 - 📱 **QR code / invite link:** hand over the room key in person, with no other channel involved.
-- 🌐 **Direct connection:** messages go straight from browser to browser over WebRTC; no server stores or relays them.
+- 🌐 **Direct connection first:** messages go straight from browser to browser over WebRTC. A TURN relay (encrypted, TLS) only steps in when no direct path exists, and no server stores anything.
 - 🚫 **No persistence:** no cookies, no storage, no logs. Close the tab and nothing is left.
 - 🧹 **Panic purge:** one button ends the session, wipes the chat and overwrites the clipboard.
 - 🛡️ **No third-party code at runtime:** all scripts and fonts are served from this repository (SRI-pinned), and a strict Content Security Policy is in place.
@@ -35,18 +35,23 @@ No accounts, no message server, no history.
 
 ## 📶 Will it connect? (network limits)
 
-The app deliberately uses **no relay (TURN) server**, so both devices must be able to reach each other directly:
+The browser always tries a **direct connection** first (IPv6, or IPv4 with STUN-assisted hole punching via adminForge). Only if that is impossible does it fall back to a **TURN relay** ([Metered](https://www.metered.ca/), free tier).
 
-| Situation | Result |
+| Situation | Path |
 |---|---|
-| Both devices have **IPv6** (most German home and mobile connections) | ✅ usually works |
-| At least one side has an "open" IPv4 NAT (typical home router without carrier NAT) | ✅ usually works |
-| Both sides only have IPv4 behind **carrier NAT / DS-Lite / symmetric NAT** | ❌ no direct path |
-| Company, hotel, guest or school Wi-Fi with a strict firewall | ❌ often blocked |
+| Both devices have **IPv6**, or one side has an "open" IPv4 NAT | ✅ direct |
+| Both sides behind **carrier NAT / DS-Lite / symmetric NAT** | ↪️ relay |
+| Company, hotel, guest or school Wi-Fi with a strict firewall | ↪️ relay (TURN over TLS on port 443 gets through most firewalls) |
 
-If no direct path exists, the app shows `[NO DIRECT PATH]` after about 30 seconds. Switching one device to mobile data (with IPv6) often helps. For guaranteed connectivity you can run your own TURN server; see [`turn-worker/README.md`](turn-worker/README.md).
+**About the relay:**
+- **What it sees:** the relay forwards already encrypted data. It sees IP addresses and data volume, never message content.
+- **TLS only:** the connection to the relay itself uses TLS (TURNS, port 443), so even the TURN username stays hidden from network observers.
+- **Public credentials:** the credentials in `config.js` are only Base64-obfuscated, which keeps automated scanners away but not humans. Anyone can use them, and the free tier (500 MB/month) simply stops when exhausted. Text chat needs only a tiny fraction of that.
+- **Hide your IP from your peer:** set `forceRelay: true`. Then all traffic goes through the relay.
 
-> **Why no public relay?** A relay cannot read messages, but it sees IP addresses. Public relays with shared credentials are run by unknown parties, get abused and are often down. The reliable ones require an account with a commercial provider. So this is opt-in only.
+If neither a direct path nor the relay works, the app shows `[NO DIRECT PATH]` / `[ICE FAILED]` after about 30 seconds.
+
+**Your own copy:** create your own TURN credentials (Metered, or your own coturn; see [`turn-worker/README.md`](turn-worker/README.md)) and replace the entry in `config.js`. Please don't use the credentials of this deployment.
 
 ## 🔒 Security in short
 
@@ -61,7 +66,7 @@ If no direct path exists, the app shows `[NO DIRECT PATH]` after about 30 second
 | Clickjacking | The app refuses to run inside a frame |
 
 **Not protected:**
-- **Metadata:** the PeerJS signaling server and STUN servers see your IP address and when you connect. Use a VPN if that matters.
+- **Metadata:** the PeerJS signaling server, the STUN servers and (if used) the TURN relay see your IP address and when you connect. Use a VPN if that matters.
 - **Skipped verification:** if you don't compare the symbols, an attacker who obtained the room key could sit in the middle unnoticed.
 - **Compromised device:** malware or a malicious browser extension sees everything.
 
