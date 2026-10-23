@@ -1,0 +1,343 @@
+/* Zero-Trace Terminal — Stylesheet
+   Fonts werden lokal ausgeliefert (kein Google-Fonts-Request, keine IP-Weitergabe an Dritte). */
+@font-face {
+    font-family: 'Fira Code';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('fonts/fira-code-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'Fira Code';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url('fonts/fira-code-latin-700-normal.woff2') format('woff2');
+}
+
+/* TEMPLATE C: TERMINAL CLI / RETRO TACTICAL */
+body {
+    font-family: 'Fira Code', 'Courier New', monospace;
+    background-color: #050805;
+    color: #00ff66;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    margin: 0;
+    padding: 16px; 
+    box-sizing: border-box;
+    background-image: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.35) 50%);
+    background-size: 100% 4px;
+}
+
+/* SCHERMATA INTRO / SPLASH SCREEN HARDLINT */
+#splash-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: #020502;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+    background-image: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.35) 50%);
+    background-size: 100% 4px;
+    transition: opacity 0.5s ease, visibility 0.5s ease;
+}
+
+.splash-logo {
+    width: 180px;
+    height: 180px;
+    border-radius: 50%;
+    border: 2px solid #00ff66;
+    box-shadow: 0 0 20px rgba(0, 255, 102, 0.5);
+    margin-bottom: 24px;
+    object-fit: contain;
+    background: #ffffff;
+    animation: logoPulse 2s infinite ease-in-out;
+}
+
+.splash-text {
+    font-size: 13px;
+    color: #00ff66;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    text-shadow: 0 0 8px rgba(0, 255, 102, 0.8);
+    margin-bottom: 20px;
+    text-align: center;
+    padding: 0 16px;
+}
+
+.vpn-warning {
+    font-size: 11px;
+    color: #ff3333;
+    border: 1px solid #ff3333;
+    background: #1a0000;
+    padding: 8px 14px;
+    margin-bottom: 20px;
+    text-align: center;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    text-shadow: 0 0 8px rgba(255, 51, 51, 0.8);
+    animation: vpnBlink 1.5s infinite;
+    max-width: 320px;
+}
+
+@keyframes vpnBlink {
+    0%, 100% { opacity: 1; box-shadow: 0 0 6px rgba(255, 51, 51, 0.5); }
+    50% { opacity: 0.7; box-shadow: 0 0 14px rgba(255, 51, 51, 0.9); }
+}
+
+.splash-btn {
+    width: auto;
+    padding: 10px 20px;
+    font-size: 12px;
+    background: #002b0e;
+    color: #00ff66;
+    border: 1px solid #00ff66;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-family: 'Fira Code', monospace;
+}
+
+.splash-btn:hover {
+    background: #00ff66;
+    color: #000000;
+    box-shadow: 0 0 10px #00ff66;
+}
+
+@keyframes logoPulse {
+    0% { box-shadow: 0 0 15px rgba(0, 255, 102, 0.4); }
+    50% { box-shadow: 0 0 30px rgba(0, 255, 102, 0.9); }
+    100% { box-shadow: 0 0 15px rgba(0, 255, 102, 0.4); }
+}
+
+.container {
+    width: 100%;
+    max-width: 580px;
+    padding: 24px;
+    background: #020502;
+    border: 2px solid #00ff66;
+    box-shadow: 0 0 15px rgba(0, 255, 102, 0.2);
+    display: none; 
+    flex-direction: column; 
+    box-sizing: border-box;
+    border-radius: 0;
+}
+
+#menu { display: flex; }
+
+h2 { 
+    margin-top: 0; 
+    color: #00ff66; 
+    font-size: 15px; 
+    text-align: center; 
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    text-shadow: 0 0 8px rgba(0, 255, 102, 0.6);
+    border-bottom: 1px dashed #00ff66;
+    padding-bottom: 8px;
+}
+
+label { 
+    font-size: 11px; 
+    color: #00b347; 
+    margin-bottom: 4px; 
+    display: block; 
+    text-transform: uppercase;
+}
+
+button, input, textarea {
+    width: 100%;
+    padding: 10px 12px;
+    margin: 6px 0 12px 0;
+    border-radius: 0;
+    border: 1px solid #00ff66;
+    background: #000000;
+    color: #00ff66;
+    box-sizing: border-box;
+    font-family: 'Fira Code', 'Courier New', monospace;
+    font-size: 12px;
+    outline: none;
+}
+
+button {
+    background: #002b0e;
+    color: #00ff66;
+    font-weight: bold;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    transition: all 0.15s ease;
+}
+button:hover:not(:disabled) { 
+    background: #00ff66; 
+    color: #000000;
+    box-shadow: 0 0 10px #00ff66;
+}
+button:disabled { 
+    background: #051408; 
+    color: #00441b; 
+    border-color: #00441b;
+    cursor: not-allowed; 
+}
+
+.btn-copy {
+    width: auto;
+    display: inline-block;
+    padding: 6px 12px;
+    margin: 2px 0 12px 0;
+    font-size: 10px;
+    background: #001a08;
+    border: 1px solid #00ff66;
+}
+
+.btn-panic {
+    background: #330000;
+    color: #ff3333;
+    border: 1px solid #ff3333;
+    font-size: 10px;
+    padding: 6px 10px;
+    margin: 0;
+    width: auto;
+}
+.btn-panic:hover {
+    background: #ff3333 !important;
+    color: #000000 !important;
+    box-shadow: 0 0 10px #ff3333 !important;
+}
+
+textarea { resize: vertical; background: #000000; }
+
+.code-box { 
+    background: #001a08; 
+    border: 1px solid #00ff66; 
+    font-size: 11px; 
+    word-break: break-all; 
+    padding: 8px; 
+    color: #00ff66; 
+    border-radius: 0; 
+    margin-bottom: 4px; 
+}
+
+.chat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px dashed #00ff66;
+    padding-bottom: 8px;
+    margin-bottom: 12px;
+}
+
+.status-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+}
+
+.led {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+.led-yellow {
+    background-color: #ffb000;
+    box-shadow: 0 0 6px #ffb000;
+    animation: blink 1s infinite;
+}
+.led-green {
+    background-color: #00ff66;
+    box-shadow: 0 0 8px #00ff66;
+    animation: pulse 1.5s infinite;
+}
+.led-red {
+    background-color: #ff3333;
+    box-shadow: 0 0 6px #ff3333;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.2; }
+}
+@keyframes pulse {
+    0% { box-shadow: 0 0 4px #00ff66; }
+    50% { box-shadow: 0 0 12px #00ff66; }
+    100% { box-shadow: 0 0 4px #00ff66; }
+}
+
+#chat-room { height: 85vh; max-height: 650px; }
+
+#messages {
+    flex: 1;
+    border: 1px solid #00ff66;
+    background: #000000;
+    padding: 12px;
+    overflow-y: auto;
+    border-radius: 0;
+    margin-bottom: 12px;
+    font-size: 12px;
+    word-wrap: break-word;
+}
+
+.msg-system { color: #008837; font-style: italic; font-size: 11px; margin: 4px 0; text-align: center; }
+.msg-me { color: #00ff66; margin: 4px 0; }
+.msg-peer { color: #ffb000; margin: 4px 0; }
+
+hr { border: 0; border-top: 1px dashed #00ff66; margin: 16px 0; width: 100%; }
+
+.input-group { display: flex; gap: 8px; width: 100%; }
+.input-group input { flex: 1; margin: 0; }
+.input-group button { width: 90px; margin: 0; }
+
+.brand-footer {
+    font-size: 10px;
+    color: #008837;
+    text-align: center;
+    margin-top: 8px;
+    letter-spacing: 1px;
+}
+
+.donate-btn {
+    background: #001a08;
+    color: #00ff66;
+    border: 1px dashed #00ff66;
+    font-size: 10px;
+    padding: 8px 10px;
+    margin-top: 4px;
+    text-align: center;
+    cursor: pointer;
+}
+.donate-btn:hover {
+    background: #00ff66;
+    color: #000000;
+}
+.donate-address {
+    font-size: 9px;
+    color: #00b347;
+    word-break: break-all;
+    text-align: center;
+    margin-top: 4px;
+}
+
+.donate-text {
+    font-size: 10px;
+    color: #00b347;
+    text-align: center;
+    line-height: 1.5;
+    margin: 10px 0 6px 0;
+    padding: 0 4px;
+}
+
+/* Hilfsklassen (ersetzen frühere Inline-Styles, damit die CSP ohne 'unsafe-inline' auskommt) */
+.hidden { display: none !important; }
+.btn-full { width: 100%; margin-top: 6px; }
+.splash-hidden { opacity: 0; visibility: hidden; }
+.msg-warn { color: #ff3333; font-style: italic; font-size: 11px; margin: 4px 0; text-align: center; }
+.flash { background: #00ff66 !important; color: #000000 !important; }

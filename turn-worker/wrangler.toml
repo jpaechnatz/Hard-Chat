@@ -1,0 +1,25 @@
+name = "hard-chat-turn"
+main = "worker.js"
+compatibility_date = "2026-06-01"
+
+[vars]
+# Exakt die Origin deiner GitHub-Pages-Seite (ohne Pfad, ohne Slash am Ende)
+ALLOWED_ORIGIN = "https://jpaechnatz.github.io"
+CRED_TTL = "7200"
+
+# Nur für Betriebsart B (eigener coturn), kommagetrennt:
+# COTURN_URLS = "stun:turn.example.org:3478,turn:turn.example.org:3478?transport=udp,turns:turn.example.org:5349?transport=tcp"
+
+# Optional, empfohlen: Rate Limiting (10 Abrufe pro Minute und IP)
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "1001"
+  [ratelimits.simple]
+  limit = 10
+  period = 60
+
+# Secrets NICHT hier eintragen, sondern per CLI:
+#   npx wrangler secret put TURN_KEY_ID
+#   npx wrangler secret put TURN_KEY_API_TOKEN
+# bzw. für coturn:
+#   npx wrangler secret put COTURN_SECRET
